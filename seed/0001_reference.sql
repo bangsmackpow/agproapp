@@ -18,11 +18,13 @@
 INSERT OR IGNORE INTO `company_settings` (
   `id`, `legal_name`, `display_name`,
   `address_line1`, `city`, `state`, `postal_code`, `country`,
+  `phone`, `email`,
   `default_tax_rate`, `invoice_terms_days`, `default_currency`
 ) VALUES (
   '00000000-0000-0000-0000-000000000001',
-  'AG Pro Solutions LLC', 'AG Pro Solutions',
+  'Agpro Solutions', 'AG Pro Solutions',
   '1200 E Howard St', 'Creston', 'IA', '50801', 'US',
+  '(641) 745-7392', 'agprosolu@gmail.com',
   0, 30, 'USD'
 );
 

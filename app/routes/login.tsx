@@ -64,8 +64,14 @@ export default function LoginRoute() {
     <main className="flex min-h-screen items-center justify-center bg-muted px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <h1 className="text-xl font-semibold text-ink">AG Pro Solutions</h1>
-          <p className="mt-1 text-sm text-ink-muted">Creston, Iowa</p>
+          <img
+            src="/logo.jpg"
+            alt="AG Pro Solutions"
+            width={132}
+            height={132}
+            className="mx-auto h-[132px] w-[132px] rounded-lg object-contain"
+          />
+          <p className="mt-3 text-sm text-ink-muted">Putting The Farmer Back In Control</p>
         </div>
 
         <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">

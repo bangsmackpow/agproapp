@@ -8,13 +8,23 @@
  * future re-theme to a single file.
  */
 @theme {
-  --color-brand-50: oklch(0.97 0.02 150);
-  --color-brand-100: oklch(0.94 0.04 150);
-  --color-brand-200: oklch(0.88 0.07 150);
-  --color-brand-500: oklch(0.62 0.13 150);
-  --color-brand-600: oklch(0.53 0.12 150);
-  --color-brand-700: oklch(0.44 0.1 150);
-  --color-brand-900: oklch(0.28 0.06 150);
+  /*
+   * Brand palette, sampled from the logo (agprosolu.com): the mark is a single
+   * vivid yellow-green, #A2D90E.
+   *
+   * It is far too bright to carry white text, so the scale splits its duties:
+   * 400-600 are the accent (fills, borders, active states, used with dark text)
+   * and 700 is the darkest passable green for solid buttons with white text
+   * (4.8:1 against white).
+   */
+  --color-brand-50: #f6fce4;
+  --color-brand-100: #ebf7c6;
+  --color-brand-200: #d8f08c;
+  --color-brand-400: #b4e326;
+  --color-brand-500: #a2d90e;
+  --color-brand-600: #8bbc0b;
+  --color-brand-700: #5c7d08;
+  --color-brand-900: #2f4204;
 
   --color-surface: oklch(1 0 0);
   --color-muted: oklch(0.97 0.003 250);

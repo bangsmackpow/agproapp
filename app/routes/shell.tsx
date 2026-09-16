@@ -49,9 +49,18 @@ export default function ShellRoute({ loaderData }: { loaderData: { user: Session
     <div className="min-h-screen lg:flex">
       <aside className="border-b border-border bg-surface lg:w-60 lg:shrink-0 lg:border-r lg:border-b-0">
         <div className="flex items-center justify-between gap-3 px-4 py-3 lg:block">
-          <div>
-            <p className="text-sm font-semibold text-ink">AG Pro Solutions</p>
-            <p className="text-xs text-ink-muted">Creston, Iowa</p>
+          <div className="flex items-center gap-3 lg:block">
+            <img
+              src="/logo.jpg"
+              alt=""
+              width={40}
+              height={40}
+              className="h-10 w-10 rounded object-contain lg:mb-2"
+            />
+            <div>
+              <p className="text-sm font-semibold text-ink">AG Pro Solutions</p>
+              <p className="text-xs text-ink-muted">Creston, Iowa</p>
+            </div>
           </div>
         </div>
 
