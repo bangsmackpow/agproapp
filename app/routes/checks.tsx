@@ -1,4 +1,4 @@
-import { Form, useActionData, useLoaderData, useNavigation } from 'react-router';
+import { Form, Link, useActionData, useLoaderData, useNavigation } from 'react-router';
 import type { ActionFunctionArgs, LoaderFunctionArgs } from 'react-router';
 
 import {
@@ -19,6 +19,7 @@ import {
 } from '../components/ui';
 import { api, getEnv, requireUser } from '../lib/api.server';
 import { formatCents, formatDate } from '../lib/utils';
+import { resolveCheckTemplate } from '../../src/shared/check-template';
 
 export const meta = () => [{ title: 'Checkwriting · AG Pro Solutions' }];
 
@@ -36,8 +37,14 @@ interface BankAccountRow {
   id: string;
   name: string;
   bankName: string | null;
+  routingNumber: string | null;
+  accountNumberLast4: string | null;
   nextCheckNumber: number;
   isActive: boolean;
+}
+
+interface CompanyRow {
+  checkTemplateConfig: Record<string, unknown> | null;
 }
 
 export async function loader({ request, context }: LoaderFunctionArgs) {
@@ -45,12 +52,17 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   // An Admin-only screen: the API enforces this, and the shell hides the link.
   await requireUser(env, request);
 
-  const [checks, accounts] = await Promise.all([
+  const [checks, accounts, company] = await Promise.all([
     api<{ data: CheckRow[] }>(env, request, '/checks?limit=100'),
     api<{ data: BankAccountRow[] }>(env, request, '/checks/bank-accounts'),
+    api<{ data: CompanyRow }>(env, request, '/company'),
   ]);
 
-  return { checks: checks.data, accounts: accounts.data };
+  return {
+    checks: checks.data,
+    accounts: accounts.data,
+    template: resolveCheckTemplate(company.data.checkTemplateConfig),
+  };
 }
 
 export async function action({ request, context }: ActionFunctionArgs) {
@@ -65,10 +77,50 @@ export async function action({ request, context }: ActionFunctionArgs) {
         body: JSON.stringify({
           name: String(form.get('name') ?? '').trim(),
           bankName: String(form.get('bankName') ?? '').trim() || undefined,
+          routingNumber: String(form.get('routingNumber') ?? '').trim() || undefined,
+          accountNumber: String(form.get('accountNumber') ?? '').trim() || undefined,
           nextCheckNumber: Number(form.get('nextCheckNumber') ?? 1001),
         }),
       });
       return { ok: 'Bank account added.' };
+    }
+
+    if (intent === 'template') {
+      // Numbers arrive as strings; the API normalises and rejects nonsense.
+      const number = (name: string): number | undefined => {
+        const raw = form.get(name);
+        if (raw === null || String(raw).trim() === '') return undefined;
+        const parsed = Number(raw);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      };
+
+      const config = {
+        checkLeftIn: number('checkLeftIn'),
+        checkTopIn: number('checkTopIn'),
+        checkWidthIn: number('checkWidthIn'),
+        checkHeightIn: number('checkHeightIn'),
+        fontSizePt: number('fontSizePt'),
+        date: { leftIn: number('dateLeftIn'), topIn: number('dateTopIn') },
+        payee: {
+          leftIn: number('payeeLeftIn'),
+          topIn: number('payeeTopIn'),
+          widthIn: number('payeeWidthIn'),
+        },
+        amountNumeric: { leftIn: number('amountLeftIn'), topIn: number('amountTopIn') },
+        amountWords: { leftIn: number('wordsLeftIn'), topIn: number('wordsTopIn') },
+        memo: { leftIn: number('memoLeftIn'), topIn: number('memoTopIn') },
+        micr: {
+          leftIn: number('micrLeftIn'),
+          topIn: number('micrTopIn'),
+          show: form.get('micrShow') === 'on',
+        },
+      };
+
+      await api(env, request, '/company', {
+        method: 'PATCH',
+        body: JSON.stringify({ checkTemplateConfig: config }),
+      });
+      return { ok: 'Check template saved. Reprint a check to check the alignment.' };
     }
 
     if (intent === 'check') {
@@ -104,8 +156,34 @@ export async function action({ request, context }: ActionFunctionArgs) {
   }
 }
 
+/** One calibration input. Inches unless `step` says otherwise. */
+function OffsetField({
+  label,
+  name,
+  defaultValue,
+  step = 0.01,
+}: {
+  label: string;
+  name: string;
+  defaultValue: number;
+  step?: number;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-ink">{label}</span>
+      <input
+        name={name}
+        type="number"
+        step={step}
+        defaultValue={defaultValue}
+        className="tabular h-8 w-full rounded-md border border-border bg-white px-2 text-sm"
+      />
+    </label>
+  );
+}
+
 export default function ChecksRoute() {
-  const { checks, accounts } = useLoaderData<typeof loader>();
+  const { checks, accounts, template } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const navigation = useNavigation();
 
@@ -169,13 +247,19 @@ export default function ChecksRoute() {
                       <Badge tone={statusTone(check.status)}>{check.status}</Badge>
                     </Td>
                     <Td>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        <Link
+                          to={`/checks/${check.id}/print`}
+                          className="inline-flex h-8 items-center rounded-md bg-white px-3 text-sm font-medium text-ink ring-1 ring-border"
+                        >
+                          Open
+                        </Link>
                         {check.status === 'draft' ? (
                           <Form method="post">
                             <input type="hidden" name="intent" value="print" />
                             <input type="hidden" name="checkId" value={check.id} />
                             <Button type="submit" size="sm" variant="secondary">
-                              Print
+                              Mark printed
                             </Button>
                           </Form>
                         ) : null}
@@ -183,7 +267,12 @@ export default function ChecksRoute() {
                           <Form method="post">
                             <input type="hidden" name="intent" value="void" />
                             <input type="hidden" name="checkId" value={check.id} />
-                            <Button type="submit" size="sm" variant="ghost" disabled={navigation.state === 'submitting'}>
+                            <Button
+                              type="submit"
+                              size="sm"
+                              variant="ghost"
+                              disabled={navigation.state === 'submitting'}
+                            >
                               Void
                             </Button>
                           </Form>
@@ -243,11 +332,120 @@ export default function ChecksRoute() {
               <Field label="Bank">
                 <Input name="bankName" placeholder="Optional" />
               </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Routing number" hint="9 digits">
+                  <Input name="routingNumber" placeholder="000000000" maxLength={9} />
+                </Field>
+                <Field label="Account number" hint="Only needed to print MICR">
+                  <Input name="accountNumber" placeholder="0000000000" />
+                </Field>
+              </div>
               <Field label="First check number">
                 <Input name="nextCheckNumber" type="number" min="1" defaultValue={1001} />
               </Field>
               <Button type="submit" variant="secondary" className="w-full">
                 Add account
+              </Button>
+            </Form>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Check stock calibration"
+              description="Inches from the top-left of the sheet. Print a check, measure how far off it is, adjust, reprint."
+            />
+            <Form method="post" className="space-y-3 p-4">
+              <input type="hidden" name="intent" value="template" />
+
+              <div className="grid grid-cols-2 gap-3">
+                <OffsetField label="Check left" name="checkLeftIn" defaultValue={template.checkLeftIn} />
+                <OffsetField label="Check top" name="checkTopIn" defaultValue={template.checkTopIn} />
+                <OffsetField label="Check width" name="checkWidthIn" defaultValue={template.checkWidthIn} />
+                <OffsetField
+                  label="Check height"
+                  name="checkHeightIn"
+                  defaultValue={template.checkHeightIn}
+                />
+              </div>
+
+              <OffsetField
+                label="Font size (pt)"
+                name="fontSizePt"
+                defaultValue={template.fontSizePt}
+                step={0.5}
+              />
+
+              <fieldset className="rounded-md border border-border p-3">
+                <legend className="px-1 text-xs font-medium text-ink-muted">Date</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <OffsetField label="Left" name="dateLeftIn" defaultValue={template.date.leftIn} />
+                  <OffsetField label="Top" name="dateTopIn" defaultValue={template.date.topIn} />
+                </div>
+              </fieldset>
+
+              <fieldset className="rounded-md border border-border p-3">
+                <legend className="px-1 text-xs font-medium text-ink-muted">Payee</legend>
+                <div className="grid grid-cols-3 gap-3">
+                  <OffsetField label="Left" name="payeeLeftIn" defaultValue={template.payee.leftIn} />
+                  <OffsetField label="Top" name="payeeTopIn" defaultValue={template.payee.topIn} />
+                  <OffsetField
+                    label="Width"
+                    name="payeeWidthIn"
+                    defaultValue={template.payee.widthIn ?? 4.7}
+                  />
+                </div>
+              </fieldset>
+
+              <fieldset className="rounded-md border border-border p-3">
+                <legend className="px-1 text-xs font-medium text-ink-muted">Amount (numeric)</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <OffsetField
+                    label="Left"
+                    name="amountLeftIn"
+                    defaultValue={template.amountNumeric.leftIn}
+                  />
+                  <OffsetField
+                    label="Top"
+                    name="amountTopIn"
+                    defaultValue={template.amountNumeric.topIn}
+                  />
+                </div>
+              </fieldset>
+
+              <fieldset className="rounded-md border border-border p-3">
+                <legend className="px-1 text-xs font-medium text-ink-muted">Amount (written)</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <OffsetField
+                    label="Left"
+                    name="wordsLeftIn"
+                    defaultValue={template.amountWords.leftIn}
+                  />
+                  <OffsetField label="Top" name="wordsTopIn" defaultValue={template.amountWords.topIn} />
+                </div>
+              </fieldset>
+
+              <fieldset className="rounded-md border border-border p-3">
+                <legend className="px-1 text-xs font-medium text-ink-muted">Memo</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <OffsetField label="Left" name="memoLeftIn" defaultValue={template.memo.leftIn} />
+                  <OffsetField label="Top" name="memoTopIn" defaultValue={template.memo.topIn} />
+                </div>
+              </fieldset>
+
+              <fieldset className="rounded-md border border-border p-3">
+                <legend className="px-1 text-xs font-medium text-ink-muted">MICR line</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <OffsetField label="Left" name="micrLeftIn" defaultValue={template.micr.leftIn} />
+                  <OffsetField label="Top" name="micrTopIn" defaultValue={template.micr.topIn} />
+                </div>
+                <label className="mt-2 flex items-center gap-2 text-xs text-ink">
+                  <input type="checkbox" name="micrShow" defaultChecked={template.micr.show} />
+                  Print MICR (E-13B stock and magnetic toner only)
+                </label>
+              </fieldset>
+
+              <Button type="submit" variant="secondary" className="w-full">
+                Save template
               </Button>
             </Form>
           </Card>

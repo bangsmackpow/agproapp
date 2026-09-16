@@ -53,3 +53,8 @@ id = "5acd33dcc3f940f3ab2410147b5c973a"
 ENVIRONMENT = "production"
 APP_NAME = "AG Pro Solutions"
 APP_REGION = "Creston, IA"
+
+# Outgoing invoice mail. The API key is a secret, not a var:
+#   wrangler secret put MAIL_PROVIDER_API_KEY
+MAIL_FROM = "AG Pro Solutions <invoices@example.com>"
+MAIL_REPLY_TO = ""

@@ -5,10 +5,13 @@
 # session cookies are not marked Secure over plain http://localhost.
 ENVIRONMENT=development
 
-# ── Auth / sessions ──────────────────────────────────────────────────────────
-# 32+ byte random value used to sign session cookies and CSRF tokens.
-# Generate with: node -e "console.log(crypto.randomBytes(48).toString('base64url'))"
-SESSION_SECRET=replace-me-with-a-long-random-value
+# ── Outgoing invoice mail (optional) ─────────────────────────────────────────
+# Without a key, delivery is recorded but not transmitted, and the app says so
+# rather than pretending the email was sent.
+# MAIL_PROVIDER_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
+
+# Overrides the MAIL_FROM / MAIL_REPLY_TO vars from wrangler.toml locally.
+# MAIL_FROM="AG Pro Solutions <invoices@example.com>"
 
 # ── Drizzle Kit remote access (optional, for db:studio / push) ───────────────
 CLOUDFLARE_ACCOUNT_ID=

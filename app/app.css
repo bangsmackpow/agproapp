@@ -53,3 +53,67 @@ body {
     min-height: 44px;
   }
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Print output
+ *
+ * The page margin is zero on purpose. Cheque offsets are measured from the
+ * physical edge of the sheet, so anything the browser adds would shift every
+ * field. The invoice supplies its own padding instead.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+.print-page {
+  width: 8.5in;
+  min-height: 11in;
+  margin: 0 auto;
+  background: #ffffff;
+  color: #111827;
+  box-sizing: border-box;
+}
+
+/* Letter-format documents get their own margins. */
+.print-page--letter {
+  padding: 0.55in 0.6in;
+}
+
+/* Absolute-positioned output (cheques) sits flush to the sheet. */
+.print-page--positioned {
+  position: relative;
+  padding: 0;
+}
+
+@page {
+  size: Letter;
+  margin: 0;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  .print-page {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    box-shadow: none;
+  }
+
+  /* Long invoices break between rows rather than through them. */
+  thead {
+    display: table-header-group;
+  }
+
+  tr {
+    page-break-inside: avoid;
+  }
+
+  .avoid-break {
+    page-break-inside: avoid;
+  }
+}

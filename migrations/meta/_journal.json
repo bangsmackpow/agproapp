@@ -15,6 +15,13 @@
       "when": 1789594481279,
       "tag": "0001_huge_catseye",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789599579978,
+      "tag": "0002_medical_echo",
+      "breakpoints": true
     }
   ]
 }

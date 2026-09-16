@@ -587,3 +587,41 @@ export async function recalculateInvoice(db: Database, invoiceId: string): Promi
 export async function isCompliant(db: Database, invoiceId: string): Promise<boolean> {
   return (await findComplianceViolations(db, invoiceId)).length === 0;
 }
+
+export interface InvoiceComplianceToken {
+  invoiceItemId: string;
+  description: string;
+  bolCmrNumber: string | null;
+  orderNumber: string | null;
+  seedNumber: string | null;
+  lotNumber: string | null;
+  verified: boolean;
+}
+
+/**
+ * The audit tokens attached to an invoice's regulated lines.
+ *
+ * Printed on the invoice so the BOL/CMR and Order Number travel with the
+ * document that was actually sold — which is what an Iowa seed audit asks for.
+ */
+export async function getInvoiceComplianceTokens(
+  db: Database,
+  invoiceId: string,
+): Promise<InvoiceComplianceToken[]> {
+  const rows = await db
+    .select({
+      invoiceItemId: invoiceItems.id,
+      description: invoiceItems.description,
+      bolCmrNumber: iowaComplianceLogs.bolCmrNumber,
+      orderNumber: iowaComplianceLogs.orderNumber,
+      seedNumber: iowaComplianceLogs.seedNumber,
+      lotNumber: iowaComplianceLogs.lotNumber,
+      verified: iowaComplianceLogs.verified,
+    })
+    .from(invoiceItems)
+    .innerJoin(iowaComplianceLogs, eq(iowaComplianceLogs.id, invoiceItems.complianceLogId))
+    .where(eq(invoiceItems.invoiceId, invoiceId))
+    .all();
+
+  return rows;
+}

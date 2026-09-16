@@ -8,6 +8,7 @@ import { requestContext } from './middleware';
 import { authRoutes } from './routes/auth';
 import { catalogRoutes } from './routes/catalog';
 import { checkRoutes } from './routes/checks';
+import { companyRoutes } from './routes/company';
 import { customerRoutes } from './routes/customers';
 import { healthRoutes } from './routes/health';
 import { importRoutes } from './routes/imports';
@@ -65,6 +66,7 @@ export function createApp(): Hono<AppEnv> {
   app.route('/api/customers', customerRoutes);
   app.route('/api/invoices', invoiceRoutes);
   app.route('/api/checks', checkRoutes);
+  app.route('/api/company', companyRoutes);
   app.route('/api/imports', importRoutes);
   // Mounted at /api: provides /api/products, /api/inventory/*, /api/drone-units, /api/pricing/*
   app.route('/api', catalogRoutes);

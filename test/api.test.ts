@@ -32,6 +32,8 @@ const LOCKABLE_ID = '33333333-3333-4333-8333-333333333334';
 const LOCKABLE_EMAIL = 'lockable@agpro.test';
 const CUSTOMER_ID = '44444444-4444-4444-8444-444444444444';
 const SEED_PRODUCT_ID = '55555555-5555-4555-8555-555555555555';
+/** Unregulated item, so delivery can be tested without the seed gate in the way. */
+const MISC_PRODUCT_ID = '55555555-5555-4555-8555-555555555556';
 const BANK_ACCOUNT_ID = '66666666-6666-4666-8666-666666666666';
 
 function cookieFrom(response: Response): string {
@@ -113,6 +115,15 @@ beforeAll(async () => {
     type: 'seed',
     unit: 'bag',
     isRegulatedSeed: true,
+  });
+
+  await db.insert(products).values({
+    id: MISC_PRODUCT_ID,
+    sku: 'MISC-SPRAYER',
+    name: 'Sprayer nozzle kit',
+    type: 'misc',
+    unit: 'each',
+    defaultCostCents: 3000,
   });
 
   await db.insert(bankAccounts).values({
@@ -529,5 +540,113 @@ describe('sign-in brute-force protection', () => {
     expect(unknown.status).toBe(401);
     const body = (await unknown.json()) as { error: { message: string } };
     expect(body.error.message).toBe('Invalid email or password');
+  });
+});
+
+describe('invoice delivery', () => {
+  async function createInvoice(productId: string, description: string): Promise<string> {
+    const response = await api('/api/invoices', {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({
+        customerId: CUSTOMER_ID,
+        pricingTierKey: 'cash_app',
+        items: [
+          {
+            lineType: 'product',
+            productId,
+            description,
+            quantity: 1,
+            unitPriceCents: 5000,
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    return ((await response.json()) as { data: { id: string } }).data.id;
+  }
+
+  it('refuses to email a regulated seed invoice whose tokens are not verified', async () => {
+    const id = await createInvoice(SEED_PRODUCT_ID, 'Channel CL-204 seed');
+
+    const response = await api(`/api/invoices/${id}/deliveries`, {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({ method: 'email', to: 'customer@example.com' }),
+    });
+
+    expect(response.status).toBe(422);
+
+    // And it must still be a draft: a blocked send cannot half-submit the invoice.
+    const detail = await api(`/api/invoices/${id}`, { cookie: salesCookie });
+    expect(((await detail.json()) as { data: { status: string } }).data.status).toBe('draft');
+  });
+
+  it('requires a recipient when the customer has no email address', async () => {
+    const id = await createInvoice(MISC_PRODUCT_ID, 'Sprayer nozzle kit');
+
+    const response = await api(`/api/invoices/${id}/deliveries`, {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({ method: 'email' }),
+    });
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toContain('no email address');
+  });
+
+  it('records a delivery, submits the invoice, and admits when no provider is configured', async () => {
+    const id = await createInvoice(MISC_PRODUCT_ID, 'Sprayer nozzle kit');
+
+    const response = await api(`/api/invoices/${id}/deliveries`, {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({ method: 'email', to: 'customer@example.com' }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      data: { delivery: { status: string; error: string | null }; invoice: { status: string } };
+    };
+
+    // No MAIL_PROVIDER_API_KEY in tests, so the honest outcome is "skipped" —
+    // recorded, not transmitted, and never reported as a success.
+    expect(body.data.delivery.status).toBe('skipped');
+    expect(body.data.delivery.error).toContain('No mail provider is configured');
+    expect(body.data.invoice.status).toBe('sent');
+  });
+
+  it('records a print as a delivery without needing a recipient', async () => {
+    const id = await createInvoice(MISC_PRODUCT_ID, 'Sprayer nozzle kit');
+
+    const response = await api(`/api/invoices/${id}/deliveries`, {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({ method: 'print' }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { data: { delivery: { method: string; status: string } } };
+    expect(body.data.delivery.method).toBe('print');
+    expect(body.data.delivery.status).toBe('sent');
+  });
+
+  it('lists the delivery history for an invoice', async () => {
+    const id = await createInvoice(MISC_PRODUCT_ID, 'Sprayer nozzle kit');
+
+    await api(`/api/invoices/${id}/deliveries`, {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({ method: 'print' }),
+    });
+
+    const response = await api(`/api/invoices/${id}/deliveries`, { cookie: salesCookie });
+    const body = (await response.json()) as { data: { method: string }[] };
+
+    expect(response.status).toBe(200);
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0]?.method).toBe('print');
   });
 });

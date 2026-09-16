@@ -9,6 +9,9 @@ import { index, layout, route } from '@react-router/dev/routes';
  */
 export default [
   route('login', 'routes/login.tsx'),
+  // Outside the shell layout: nothing that would land on paper.
+  route('invoices/:id/print', 'routes/invoice-print.tsx'),
+  route('checks/:id/print', 'routes/check-print.tsx'),
   layout('routes/shell.tsx', [
     index('routes/dashboard.tsx'),
     route('customers', 'routes/customers.tsx'),

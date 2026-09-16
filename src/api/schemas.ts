@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   APPLICATION_METHODS,
   CHECK_STATUSES,
+  DELIVERY_METHODS,
   DOCUMENT_TYPES,
   DRONE_UNIT_STATUSES,
   IMPORT_TARGETS,
@@ -204,6 +205,31 @@ export const droneUnitCreateSchema = z.object({
   notes: optionalText(1000),
 });
 
+/* ── Company settings ──────────────────────────────────────────────────────── */
+
+export const companySettingsUpdateSchema = z.object({
+  legalName: z.string().trim().min(1).max(200).optional(),
+  displayName: z.string().trim().min(1).max(200).optional(),
+  addressLine1: optionalText(120),
+  addressLine2: optionalText(120),
+  city: optionalText(80),
+  state: optionalText(2),
+  postalCode: optionalText(12),
+  phone: optionalText(30),
+  email: email().optional(),
+  website: optionalText(120),
+  ein: optionalText(20),
+  pesticideLicenseNumber: optionalText(60),
+  defaultTaxRate: z.number().min(0).max(1).optional(),
+  invoiceTermsDays: z.number().int().min(0).max(365).optional(),
+  /**
+   * Check-stock offsets. Accepted loosely and normalised with
+   * `resolveCheckTemplate` before storage, because this value is typed in by
+   * hand and a missing field must not blank a printed cheque.
+   */
+  checkTemplateConfig: z.record(z.string(), z.unknown()).optional(),
+});
+
 /* ── Vendors & accounts payable ────────────────────────────────────────────── */
 
 export const vendorBillCreateSchema = z.object({
@@ -292,6 +318,19 @@ export const invoiceRecordPaymentSchema = z.object({
   amountCents: z.number().int().positive(),
 });
 
+/**
+ * Delivery of an invoice.
+ *
+ * `email` needs a recipient: either given here or taken from the customer record.
+ * `print` and `download` record that the document left the building, which is
+ * what a paper trail is actually for.
+ */
+export const invoiceDeliverySchema = z.object({
+  method: oneOf(DELIVERY_METHODS),
+  to: email().optional(),
+  note: optionalText(500),
+});
+
 /* ── Checkwriting ──────────────────────────────────────────────────────────── */
 
 export const checkCreateSchema = z.object({
@@ -327,9 +366,26 @@ export const bankAccountCreateSchema = z.object({
   name: z.string().trim().min(1).max(80),
   bankName: optionalText(120),
   routingNumber: z.string().trim().regex(/^\d{9}$/, 'Routing number must be 9 digits').optional(),
+  /**
+   * Full account number. Required only if you intend to print a MICR line; it is
+   * never returned by list endpoints.
+   */
+  accountNumber: z
+    .string()
+    .trim()
+    .regex(/^\d{4,17}$/, 'Account number must be 4-17 digits')
+    .optional(),
   accountNumberLast4: z.string().trim().regex(/^\d{4}$/, 'Expected the last 4 digits').optional(),
   nextCheckNumber: z.number().int().min(1).optional(),
   isDefault: z.boolean().optional(),
+});
+
+export const bankAccountUpdateSchema = bankAccountCreateSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});
+
+export const checkTemplateUpdateSchema = z.object({
+  checkTemplateConfig: z.record(z.string(), z.unknown()),
 });
 
 /* ── Ingestion ─────────────────────────────────────────────────────────────── */

@@ -41,7 +41,7 @@ Attempted access to the checkwriting module by `sales` or `manager` is blocked i
 | **1** | D1 schema (29 tables), RBAC, pricing engine, worker/config scaffold, migrations + reference seed | ✅ Complete |
 | **2** | Hono gateway: auth, RBAC middleware, CRM/catalog/inventory/invoice/check routes, document parse engine + review queue | ✅ Complete |
 | **3** | Cross-platform UI: React Router SSR + Tailwind, login, role-aware shell, and screens for CRM, inventory, invoicing, checkwriting and imports | ✅ Complete |
-| **4** | Print optimization (invoice letter, three-part check stock) + electronic invoice delivery | ⏳ Planned |
+| **4** | Print output (invoice letter format, positioned three-part cheque) + electronic invoice delivery | ✅ Complete |
 
 ---
 
@@ -83,6 +83,8 @@ A healthy response reports `"status": "ok"` and `"checks": { "database": "ok" }`
 ### Environment model
 
 There is one deployment target. Locally you run against a local D1; the top-level configuration in `wrangler.toml` is what ships to Cloudflare. `.dev.vars` overrides `ENVIRONMENT` to `development` so session cookies are not marked `Secure` over plain HTTP.
+
+> `.dev.vars` is read by `pnpm dev` (`vite dev`) but **not** by `pnpm preview`, which serves the built Worker from `wrangler.toml` — so a preview build runs with `ENVIRONMENT=production` and `Secure` cookies. Browsers permit `Secure` cookies on `http://localhost`, so this only bites tooling with a stricter cookie jar.
 
 ### Configuration
 
@@ -206,10 +208,13 @@ All routes other than health require a session cookie. Permission shown is the m
 | `POST /api/invoices/:id/send` | `invoices:send` | **Draft → Sent. Fails 422 listing any unverified regulated seed line.** |
 | `POST /api/invoices/:id/cancel` | `invoices:cancel` | Sent/Draft → Canceled |
 | `POST /api/invoices/:id/payments` | `invoices:write` | Applies a payment; flips to Paid at zero balance |
+| `GET /api/invoices/:id/deliveries` | `invoices:read` | Delivery history |
+| `POST /api/invoices/:id/deliveries` | `invoices:send` | Deliver by `email`, `print` or `download`. Email is gated on seed compliance |
+| `GET/PATCH /api/company` | session / `admin:settings` | Letterhead and cheque template configuration |
 | `GET /api/checks`, `GET /api/checks/:id` | `checks:read` | **Admin only** |
 | `POST /api/checks` | `checks:write` | **Admin only.** Allocates the next check number atomically |
 | `POST /api/checks/:id/print` · `/clear` · `/void` | `checks:print` / `checks:write` / `checks:void` | **Admin only.** Void reverses allocations and restores bill balances |
-| `GET/POST /api/checks/bank-accounts` | `checks:read` / `admin:settings` | **Admin only** |
+| `GET/POST /api/checks/bank-accounts`, `GET /api/checks/bank-accounts/:id` | `checks:read` / `admin:settings` | **Admin only.** The full account number is returned only by the single-account lookup the print view uses |
 | `GET /api/imports/parsers` | `inventory:import` | Available document parsers |
 | `POST /api/imports/batches` | `inventory:import` | Parse a document's extracted text into a review batch |
 | `GET /api/imports/batches`, `GET /api/imports/batches/:id` | `inventory:read` | Review queue |
@@ -217,6 +222,33 @@ All routes other than health require a session cookie. Permission shown is the m
 | `POST /api/imports/batches/:id/commit` · `/reject` | `inventory:import` | Commit reviewed rows to their target tables |
 
 Unrouted paths return a structured JSON `404`, never an HTML error page.
+
+### Printed output
+
+Both documents render at `/invoices/:id/print` and `/checks/:id/print`, outside the application shell so no navigation reaches paper.
+
+- **Invoice** — standard letter format: letterhead, bill-to and ship-to, line items, totals, payment terms, and a **Seed audit reference** block carrying the BOL/CMR Number and Order Number for every regulated line, so the tokens travel with the document that was actually sold.
+- **Cheque** — every coordinate is a CSS custom property sourced from `company_settings.check_template_config`, so calibrating the layout is a data change and the component never needs editing. The Checkwriting screen exposes the offsets; print a cheque, measure the error, adjust, reprint. A dashed outline marks the cheque area on screen only.
+
+`@page` margin is zero on purpose: cheque offsets are measured from the physical edge of the sheet, so anything the browser adds would shift every field. Print at 100% scale with margins set to None.
+
+**MICR is off by default.** A MICR line is only readable by a bank's sorter when printed in E-13B font with magnetic toner on encoded stock; printed otherwise it looks authoritative and scans as nothing. Enable it only if your stock and printer qualify — and note that a partial line is refused rather than emitted, because encoding half the information is worse than encoding none.
+
+### Electronic delivery
+
+`POST /api/invoices/:id/deliveries` transmits by email, or records a `print`/`download` for the paper trail. Email delivery runs the Draft → Sent transition first, so a regulated seed sale cannot reach a customer's inbox before its BOL/CMR and Order Number tokens are verified.
+
+Outcome is recorded honestly in three states:
+
+| Status | Meaning |
+|---|---|
+| `sent` | Handed to the provider (or recorded, for print/download) |
+| `skipped` | No `MAIL_PROVIDER_API_KEY` configured — recorded but **not transmitted** |
+| `failed` | A configured provider refused it; the reason is stored and surfaced |
+
+Configure delivery with `wrangler secret put MAIL_PROVIDER_API_KEY` and the `MAIL_FROM` var. Provider selection is one function in `src/services/mailer.ts`, so swapping Resend for something else is a contained change.
+
+The email body is a summary with a link rather than a reproduction of the invoice markup — the print view is the document of record, and duplicating its HTML would guarantee the two drift apart.
 
 ### Document ingestion
 
@@ -236,7 +268,7 @@ Detection is content-based, not filename-based, and a document no parser recogni
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 78 tests
+pnpm test           # vitest run — 99 tests
 pnpm test:watch     # watch mode
 pnpm typecheck      # react-router typegen + tsc, app + config projects
 pnpm typegen        # regenerate .react-router/types
@@ -250,6 +282,8 @@ Coverage is deliberately weighted towards the things that lose money or break th
 - **Money arithmetic** — integer-cent multipliers, acreage totals, discount apportionment, tax.
 - **Auth** — wrong password and unknown account produce an identical response; logout genuinely revokes.
 - **Brute-force protection** — repeated failures lock the account, the lock holds even against the correct password, unrelated accounts are unaffected, and a successful sign-in clears the failure count.
+- **Cheque layout** — the template resolver falls back rather than blanking a cheque when hand-edited values are nonsense, amount-in-words handles the group boundaries, and a partial MICR line is refused.
+- **Delivery** — a regulated seed invoice cannot be emailed before its tokens are verified, and a missing mail provider is reported as `skipped`, never as success.
 - **RBAC** — sales blocked from inventory writes and from importing; managers allowed; checkwriting denied to both sales and managers.
 - **Check numbering** — strictly increasing, and five concurrent requests produce five distinct numbers.
 - **The Iowa seed gate** — a regulated seed invoice cannot leave Draft until its BOL/CMR and Order Number tokens are recorded *and* verified.
@@ -270,14 +304,16 @@ app/                     React Router UI
 │   ├── api.server.ts    Calls the Hono app in-isolate; session and RBAC helpers
 │   └── utils.ts         Class merging and money/date formatting
 └── routes/              login, shell, dashboard, customers, inventory,
-                         invoices, invoice-detail, checks, imports
+                         invoices, invoice-detail, checks, imports,
+                         invoice-print, check-print
 src/                     API and domain layer
 ├── worker.ts            API-only entry, used by the test harness
 ├── env.ts               Bindings (generated) + Hono environment
-├── shared/              Domain enums, RBAC matrix, pricing helpers
+├── shared/              Domain enums, RBAC matrix, pricing helpers, cheque template
 ├── db/                  Drizzle schema, client factory, driver-error classification
 ├── api/                 Hono app, middleware, request schemas, routes
-└── services/            Pricing, invoicing, checkwriting, imports, parsers
+└── services/            Pricing, invoicing, checkwriting, imports, parsers,
+                         mailer, invoice email
 scripts/create-user.mjs  Bootstrap CLI for the founding Admin
 migrations/              Drizzle-generated SQL migrations
 seed/                    Idempotent reference data

@@ -46,12 +46,16 @@ export function extractSetCookie(response: Response): string | null {
 
 export interface ApiErrorPayload {
   error?: { code?: string; message?: string; details?: unknown };
+  /** Present on some non-2xx responses that still carry domain data. */
+  data?: unknown;
 }
 
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly details: unknown;
+  /** The full response body, so callers can read domain fields on a non-2xx. */
+  readonly payload: unknown;
 
   constructor(status: number, payload: ApiErrorPayload | null, fallback: string) {
     super(payload?.error?.message ?? fallback);
@@ -59,6 +63,7 @@ export class ApiError extends Error {
     this.status = status;
     this.code = payload?.error?.code ?? 'error';
     this.details = payload?.error?.details;
+    this.payload = payload;
   }
 }
 

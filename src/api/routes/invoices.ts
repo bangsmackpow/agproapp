@@ -2,19 +2,23 @@ import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { Hono } from 'hono';
 
 import { createDb } from '../../db';
-import { invoices } from '../../db/schema';
+import { companySettings, customers, invoiceDeliveries, invoices } from '../../db/schema';
 import type { AppEnv } from '../../env';
-import { notFound, parseJson, parseQuery } from '../lib/http';
+import { conflict, notFound, parseJson, parseQuery, unprocessable } from '../lib/http';
 import { requireAuth, requirePermission } from '../middleware';
 import {
   invoiceCreateSchema,
+  invoiceDeliverySchema,
   invoiceListQuerySchema,
   invoiceRecordPaymentSchema,
 } from '../schemas';
 import { recordAudit } from '../../services/audit';
+import { composeInvoiceEmail } from '../../services/invoice-email';
+import { createMailer } from '../../services/mailer';
 import {
   createInvoiceDraft,
   findComplianceViolations,
+  getInvoiceComplianceTokens,
   getInvoiceWithItems,
   recordInvoicePayment,
   updateInvoiceStatus,
@@ -56,11 +60,15 @@ invoiceRoutes.get('/', requirePermission('invoices:read'), async (c) => {
 invoiceRoutes.get('/:id', requirePermission('invoices:read'), async (c) => {
   const db = createDb(c.env.DB);
   const { invoice, items } = await getInvoiceWithItems(db, c.req.param('id'));
-  const violations = await findComplianceViolations(db, invoice.id);
+  const [violations, complianceTokens] = await Promise.all([
+    findComplianceViolations(db, invoice.id),
+    getInvoiceComplianceTokens(db, invoice.id),
+  ]);
 
   return c.json({
     data: invoice,
     items,
+    complianceTokens,
     compliance: {
       satisfied: violations.length === 0,
       violations,
@@ -142,8 +150,7 @@ invoiceRoutes.post('/:id/cancel', requirePermission('invoices:cancel'), async (c
   return c.json({ data: invoice });
 });
 
-invoiceRoutes.post('/:id/payments', requirePermission('invoices:write'), async (c) => {
-  const { amountCents } = await parseJson(c.req.raw, invoiceRecordPaymentSchema);
+invoiceRoutes.post('/:id/payments', requirePermission('invoices:write'), async (c) => {  const { amountCents } = await parseJson(c.req.raw, invoiceRecordPaymentSchema);
   const db = createDb(c.env.DB);
   const actor = c.get('user');
 
@@ -159,4 +166,135 @@ invoiceRoutes.post('/:id/payments', requirePermission('invoices:write'), async (
   });
 
   return c.json({ data: invoice });
+});
+
+/** Delivery history, newest first. */
+invoiceRoutes.get('/:id/deliveries', requirePermission('invoices:read'), async (c) => {
+  const db = createDb(c.env.DB);
+
+  const rows = await db
+    .select()
+    .from(invoiceDeliveries)
+    .where(eq(invoiceDeliveries.invoiceId, c.req.param('id')))
+    .orderBy(desc(invoiceDeliveries.createdAt))
+    .all();
+
+  return c.json({ data: rows });
+});
+
+/**
+ * Delivers an invoice.
+ *
+ * For `email` this actually transmits; for `print` and `download` it records that
+ * the document left the building. Email delivery is gated on Iowa seed compliance
+ * for the same reason sending is: it puts a document in a customer's hands.
+ */
+invoiceRoutes.post('/:id/deliveries', requirePermission('invoices:send'), async (c) => {
+  const input = await parseJson(c.req.raw, invoiceDeliverySchema);
+  const db = createDb(c.env.DB);
+  const actor = c.get('user');
+  const id = c.req.param('id');
+
+  const existing = await db.select().from(invoices).where(eq(invoices.id, id)).get();
+  if (!existing) throw notFound('Invoice not found');
+  if (existing.status === 'canceled') throw conflict('Cannot deliver a canceled invoice');
+
+  // Draft -> Sent is the compliance gate. An already-sent invoice has passed it.
+  const invoice =
+    existing.status === 'draft' ? await updateInvoiceStatus(db, id, 'sent', actor.id) : existing;
+
+  const { items } = await getInvoiceWithItems(db, id);
+  const complianceTokens = await getInvoiceComplianceTokens(db, id);
+
+  const now = new Date();
+  let destination: string | null = input.to?.trim() ?? null;
+  let status = 'sent';
+  let error: string | null = null;
+  let providerMessageId: string | null = null;
+
+  if (input.method === 'email') {
+    if (!destination) {
+      const customer = await db
+        .select({ email: customers.email })
+        .from(customers)
+        .where(eq(customers.id, invoice.customerId))
+        .get();
+      destination = customer?.email ?? null;
+    }
+
+    if (!destination) {
+      throw unprocessable('This customer has no email address. Add one, or supply a recipient.');
+    }
+
+    const company = await db.select().from(companySettings).limit(1).get();
+    const message = composeInvoiceEmail({
+      invoice: {
+        invoiceNumber: invoice.invoiceNumber,
+        customerName: invoice.customerName,
+        issueDate: invoice.issueDate,
+        dueDate: invoice.dueDate,
+        totalCents: invoice.totalCents,
+        amountPaidCents: invoice.amountPaidCents,
+        balanceCents: invoice.balanceCents,
+        termsDays: invoice.termsDays,
+        poNumber: invoice.poNumber,
+      },
+      company: {
+        displayName: company?.displayName ?? 'AG Pro Solutions',
+        legalName: company?.legalName ?? 'AG Pro Solutions LLC',
+        phone: company?.phone ?? null,
+        email: company?.email ?? null,
+        addressLine1: company?.addressLine1 ?? null,
+        city: company?.city ?? null,
+        state: company?.state ?? null,
+        postalCode: company?.postalCode ?? null,
+      },
+      itemCount: items.length,
+      invoiceUrl: new URL(`/invoices/${id}/print`, c.req.url).toString(),
+      complianceTokens: complianceTokens.map((token) => ({
+        bolCmrNumber: token.bolCmrNumber,
+        orderNumber: token.orderNumber,
+      })),
+    });
+
+    const result = await createMailer(c.env).send({
+      to: destination,
+      subject: message.subject,
+      text: message.text,
+      html: message.html,
+    });
+
+    if (result.ok) {
+      providerMessageId = result.providerMessageId ?? null;
+    } else {
+      // A configured provider that refused is a failure; no provider at all is a
+      // skipped delivery. Conflating the two would hide a misconfiguration.
+      status = result.skipped ? 'skipped' : 'failed';
+      error = result.error ?? 'Delivery failed';
+    }
+  }
+
+  const [delivery] = await db
+    .insert(invoiceDeliveries)
+    .values({
+      invoiceId: id,
+      method: input.method,
+      destination,
+      providerMessageId,
+      status,
+      error,
+      sentAt: status === 'sent' ? now : null,
+    })
+    .returning();
+
+  await recordAudit(db, {
+    actorUserId: actor.id,
+    action: 'invoice.delivered',
+    entityType: 'invoice',
+    entityId: id,
+    metadata: { method: input.method, destination, status, note: input.note ?? null },
+    ipAddress: c.req.header('cf-connecting-ip') ?? null,
+  });
+
+  return c.json({ data: { delivery, invoice } }, status === 'failed' ? 502 : 201);
 });

@@ -5,7 +5,7 @@ import { createDb } from '../../db';
 import { isUniqueConstraintError } from '../../db/errors';
 import { bankAccounts, checks } from '../../db/schema';
 import type { AppEnv } from '../../env';
-import { conflict, parseJson, parseQuery } from '../lib/http';
+import { conflict, notFound, parseJson, parseQuery } from '../lib/http';
 import { requireAdmin, requireAuth, requirePermission } from '../middleware';
 import { bankAccountCreateSchema, checkCreateSchema, checkListQuerySchema } from '../schemas';
 import { recordAudit } from '../../services/audit';
@@ -55,8 +55,38 @@ checkRoutes.get('/', requirePermission('checks:read'), async (c) => {
 
 checkRoutes.get('/bank-accounts', requirePermission('checks:read'), async (c) => {
   const db = createDb(c.env.DB);
-  const rows = await db.select().from(bankAccounts).orderBy(bankAccounts.name).all();
+  // Explicit columns: `accountNumber` must never leave the Worker in a list.
+  const rows = await db
+    .select({
+      id: bankAccounts.id,
+      name: bankAccounts.name,
+      bankName: bankAccounts.bankName,
+      routingNumber: bankAccounts.routingNumber,
+      accountNumberLast4: bankAccounts.accountNumberLast4,
+      nextCheckNumber: bankAccounts.nextCheckNumber,
+      isDefault: bankAccounts.isDefault,
+      isActive: bankAccounts.isActive,
+      createdAt: bankAccounts.createdAt,
+      updatedAt: bankAccounts.updatedAt,
+    })
+    .from(bankAccounts)
+    .orderBy(bankAccounts.name)
+    .all();
+
   return c.json({ data: rows });
+});
+
+/** Banking details for one account, including the full number the print view needs. */
+checkRoutes.get('/bank-accounts/:id', requirePermission('checks:read'), async (c) => {
+  const db = createDb(c.env.DB);
+  const account = await db
+    .select()
+    .from(bankAccounts)
+    .where(eq(bankAccounts.id, c.req.param('id')))
+    .get();
+
+  if (!account) throw notFound('Bank account not found');
+  return c.json({ data: account });
 });
 
 checkRoutes.post('/bank-accounts', requirePermission('admin:settings'), async (c) => {
@@ -85,7 +115,16 @@ checkRoutes.post('/bank-accounts', requirePermission('admin:settings'), async (c
 
 checkRoutes.get('/:id', requirePermission('checks:read'), async (c) => {
   const db = createDb(c.env.DB);
-  return c.json({ data: await getCheckWithAllocations(db, c.req.param('id')) });
+  const { check, allocations } = await getCheckWithAllocations(db, c.req.param('id'));
+
+  // Included for the print view: composing a cheque needs the paying account.
+  const bankAccount = await db
+    .select()
+    .from(bankAccounts)
+    .where(eq(bankAccounts.id, check.bankAccountId))
+    .get();
+
+  return c.json({ data: { check, allocations, bankAccount: bankAccount ?? null } });
 });
 
 checkRoutes.post('/', requirePermission('checks:write'), async (c) => {

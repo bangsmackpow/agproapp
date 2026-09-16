@@ -30,8 +30,7 @@ import { relations, sql } from 'drizzle-orm';
 import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 import {
-  APPLICATION_METHODS,
-  CHECK_STATUSES,
+  APPLICATION_METHODS,  CHECK_STATUSES,
   COMPLIANCE_SOURCES,
   CROP_TYPES,
   DELIVERY_METHODS,
@@ -50,6 +49,7 @@ import {
   USER_ROLES,
   VENDOR_BILL_STATUSES,
 } from '../shared/enums';
+import type { CheckTemplateConfig } from '../shared/check-template';
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Column helpers
@@ -179,9 +179,7 @@ export const companySettings = sqliteTable('company_settings', {
   invoiceTermsDays: integer('invoice_terms_days').notNull().default(30),
   defaultCurrency: text('default_currency').notNull().default('USD'),
   /** Absolute offsets (inches) for the three-part check print template. */
-  checkTemplateConfig: text('check_template_config', { mode: 'json' }).$type<
-    Record<string, number>
-  >(),
+  checkTemplateConfig: text('check_template_config', { mode: 'json' }).$type<CheckTemplateConfig>(),
   ...timestamps(),
 });
 
@@ -927,6 +925,13 @@ export const bankAccounts = sqliteTable(
     name: text('name').notNull(),
     bankName: text('bank_name'),
     routingNumber: text('routing_number'),
+    /**
+     * Full account number, needed to compose a MICR line.
+     *
+     * Sensitive: it is never returned by list endpoints, only by the single
+     * account lookup the cheque print view uses (Admin-only router).
+     */
+    accountNumber: text('account_number'),
     accountNumberLast4: text('account_number_last4'),
     /** Monotonic counter. Advanced atomically inside the same batch as insert. */
     nextCheckNumber: integer('next_check_number').notNull().default(1001),

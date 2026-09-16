@@ -16,7 +16,7 @@ import {
   Th,
   statusTone,
 } from '../components/ui';
-import { api, getEnv, requireUser } from '../lib/api.server';
+import { ApiError, api, getEnv, requireUser } from '../lib/api.server';
 import { can } from '../../src/shared/rbac';
 import { formatCents, formatDate } from '../lib/utils';
 
@@ -62,20 +62,34 @@ interface ComplianceViolation {
   reason: string;
 }
 
+interface DeliveryRow {
+  id: string;
+  method: string;
+  destination: string | null;
+  status: string;
+  error: string | null;
+  sentAt: number | null;
+  createdAt: number;
+}
+
 export async function loader({ request, context, params }: LoaderFunctionArgs) {
   const env = getEnv(context);
   const user = await requireUser(env, request);
 
-  const payload = await api<{
-    data: Invoice;
-    items: InvoiceItem[];
-    compliance: { satisfied: boolean; violations: ComplianceViolation[] };
-  }>(env, request, `/invoices/${params.id}`);
+  const [payload, deliveries] = await Promise.all([
+    api<{
+      data: Invoice;
+      items: InvoiceItem[];
+      compliance: { satisfied: boolean; violations: ComplianceViolation[] };
+    }>(env, request, `/invoices/${params.id}`),
+    api<{ data: DeliveryRow[] }>(env, request, `/invoices/${params.id}/deliveries`),
+  ]);
 
   return {
     invoice: payload.data,
     items: payload.items,
     compliance: payload.compliance,
+    deliveries: deliveries.data,
     permissions: {
       send: can(user.role, 'invoices:send'),
       cancel: can(user.role, 'invoices:cancel'),
@@ -109,6 +123,41 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
       });
       return { ok: 'Payment recorded.' };
     }
+    if (intent === 'deliver') {
+      const to = String(form.get('to') ?? '').trim();
+      try {
+        const result = await api<{ data: { delivery: { status: string; error: string | null } } }>(
+          env,
+          request,
+          `/invoices/${params.id}/deliveries`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ method: 'email', ...(to ? { to } : {}) }),
+          },
+        );
+
+        const { status, error } = result.data.delivery;
+        if (status === 'sent') return { ok: 'Invoice emailed.' };
+        // 'skipped' means no provider is configured — not a failure, a gap.
+        return { warning: error ?? `Delivery ${status}.` };
+      } catch (error) {
+        // A failed send returns 502 with the delivery record in the body.
+        if (error instanceof ApiError && error.status === 502) {
+          const payload = error.payload as { data?: { delivery?: { error?: string | null } } } | null;
+          return { error: payload?.data?.delivery?.error ?? 'The mail provider refused the message.' };
+        }
+        throw error;
+      }
+    }
+
+    if (intent === 'record-print') {
+      await api(env, request, `/invoices/${params.id}/deliveries`, {
+        method: 'POST',
+        body: JSON.stringify({ method: 'print' }),
+      });
+      return { ok: 'Print recorded.' };
+    }
+
     return { error: 'Unknown action.' };
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'That action failed.' };
@@ -116,7 +165,7 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
 }
 
 export default function InvoiceDetailRoute() {
-  const { invoice, items, compliance, permissions } = useLoaderData<typeof loader>();
+  const { invoice, items, compliance, deliveries, permissions } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const navigation = useNavigation();
 
@@ -128,8 +177,14 @@ export default function InvoiceDetailRoute() {
         title={invoice.invoiceNumber}
         description={`${invoice.customerName} · issued ${formatDate(invoice.issueDate)}`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <Badge tone={statusTone(invoice.status)}>{invoice.status}</Badge>
+            <Link
+              className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-ink ring-1 ring-border"
+              to={`/invoices/${invoice.id}/print`}
+            >
+              Print view
+            </Link>
             <Link className="text-sm text-brand-700 underline" to="/invoices">
               All invoices
             </Link>
@@ -140,6 +195,11 @@ export default function InvoiceDetailRoute() {
       {result?.error ? (
         <div className="mb-4">
           <Alert title={result.error} />
+        </div>
+      ) : null}
+      {result?.warning ? (
+        <div className="mb-4">
+          <Alert tone="warning" title={result.warning} />
         </div>
       ) : null}
       {result?.ok ? (
@@ -292,6 +352,30 @@ export default function InvoiceDetailRoute() {
                   </Form>
                 ) : null}
 
+                {permissions.send ? (
+                  <div className="space-y-3 border-t border-border pt-3">
+                    <Form method="post" className="space-y-2">
+                      <input type="hidden" name="intent" value="deliver" />
+                      <Field
+                        label="Email this invoice"
+                        hint="Leaves the recipient blank to use the address on the customer record"
+                      >
+                        <Input name="to" type="email" placeholder="customer@example.com" />
+                      </Field>
+                      <Button type="submit" variant="secondary" className="w-full">
+                        Send by email
+                      </Button>
+                    </Form>
+
+                    <Form method="post">
+                      <input type="hidden" name="intent" value="record-print" />
+                      <Button type="submit" variant="ghost" className="w-full">
+                        Record a print
+                      </Button>
+                    </Form>
+                  </div>
+                ) : null}
+
                 {permissions.cancel ? (
                   <Form method="post">
                     <input type="hidden" name="intent" value="cancel" />
@@ -303,6 +387,42 @@ export default function InvoiceDetailRoute() {
               </div>
             </Card>
           ) : null}
+
+          <Card>
+            <CardHeader
+              title="Delivery history"
+              description="What left the office, and whether it actually went"
+            />
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Method</Th>
+                  <Th>Destination</Th>
+                  <Th>When</Th>
+                  <Th>Status</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {deliveries.length === 0 ? (
+                  <EmptyRow colSpan={4} message="Nothing delivered yet." />
+                ) : (
+                  deliveries.map((delivery) => (
+                    <tr key={delivery.id}>
+                      <Td className="capitalize">{delivery.method}</Td>
+                      <Td className="break-all">{delivery.destination ?? '—'}</Td>
+                      <Td>{formatDate(delivery.sentAt ?? delivery.createdAt)}</Td>
+                      <Td>
+                        <Badge tone={statusTone(delivery.status)}>{delivery.status}</Badge>
+                        {delivery.error ? (
+                          <span className="mt-1 block text-xs text-danger">{delivery.error}</span>
+                        ) : null}
+                      </Td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </Table>
+          </Card>
         </div>
       </div>
     </>
