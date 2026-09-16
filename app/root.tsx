@@ -17,6 +17,10 @@ export const meta = () => [
   { name: 'robots', content: 'noindex, nofollow' },
 ];
 
+// Declared so the browser fetches the icon we ship, instead of probing
+// /favicon.ico and logging a routing error on every page load.
+export const links = () => [{ rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }];
+
 export function Layout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
