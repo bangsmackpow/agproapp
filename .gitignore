@@ -1,0 +1,48 @@
+# ── Local / seeded source documents (never commit) ────────────────────────────
+# Scanned vendor invoices, BOLs and inventory workbooks live in docs/ for local
+# ingestion only. They contain vendor pricing and customer data.
+docs/*.jpg
+docs/*.jpeg
+docs/*.png
+docs/*.pdf
+docs/*.xlsx
+docs/*.xls
+
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ── Cloudflare / Wrangler ────────────────────────────────────────────────────
+.wrangler/
+.wrangler-dist/
+wrangler.toml.bak
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+# ── Build output ─────────────────────────────────────────────────────────────
+dist/
+build/
+.output/
+.vercel/
+*.tsbuildinfo
+
+# ── Environment ──────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+.vars
+
+# ── Editor / OS ──────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# ── Logs / coverage ──────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+coverage/
