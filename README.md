@@ -115,6 +115,20 @@ pnpm db:studio              # Drizzle Studio (needs CLOUDFLARE_* env vars)
 
 Reference data lives in [`seed/0001_reference.sql`](seed/0001_reference.sql) rather than in `migrations/`, so Drizzle's generated migration sequence stays untouched. Every statement is `INSERT OR IGNORE`, so re-running is safe.
 
+### Creating the first user
+
+A freshly migrated database has no users, so there is nothing to log in with yet. Create the founding Admin with the bundled CLI — it hashes the password with the exact PBKDF2 routine the Worker verifies against, and never routes the password through a shell:
+
+```bash
+pnpm user:create                        # interactive; local D1
+pnpm user:create -- --remote            # the deployed D1 (top-level environment)
+pnpm user:create -- --remote --env production
+```
+
+It prompts for the email address, full name and a hidden password (minimum 12 characters). Flags are available for scripted use: `--email`, `--name`, `--role`, `--password`, `--remote`, `--env`, `--db`.
+
+> Changing `database_id` in `wrangler.toml` points Wrangler at a different local D1 store, because local state is keyed by database id. Re-run `pnpm db:migrate:local` after switching.
+
 ### Money and units
 
 Two conventions hold everywhere; violating them is a bug:
