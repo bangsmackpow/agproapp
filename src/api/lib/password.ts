@@ -2,16 +2,39 @@
  * Password hashing on the edge.
  *
  * PBKDF2-HMAC-SHA256 via WebCrypto — no native dependency, available in every
- * Workers isolate. Encoded as a self-describing string so the iteration count
- * and salt travel with the digest and can be raised later without invalidating
+ * Workers isolate. Encoded as a self-describing string so the work factor and
+ * salt travel with the digest and can be raised later without invalidating
  * existing credentials:
  *
- *   pbkdf2$sha256$210000$<salt-b64url>$<digest-b64url>
+ *   pbkdf2$sha256$100000$<salt-b64url>$<digest-b64url>
+ *
+ * WORK FACTOR — READ BEFORE CHANGING
+ * ──────────────────────────────────
+ * Cloudflare's WebCrypto rejects PBKDF2 iteration counts above 100,000:
+ *
+ *   NotSupportedError: Pbkdf2 failed: iteration counts above 100000 are not
+ *   supported (requested 210000).
+ *
+ * Local `workerd` (miniflare) does not enforce the same ceiling, so a value that
+ * passes every local test can still fail in production. 100,000 is therefore
+ * both our work factor and a hard platform ceiling; raising it requires
+ * `MAX_PBKDF2_ITERATIONS` to be revisited against the deployed runtime, not just
+ * against the test suite.
+ *
+ * Because the digest is self-describing, a future runtime that permits more
+ * iterations can be migrated to without invalidating stored passwords — see
+ * `needsRehash`.
  */
 
 const ALGORITHM = 'PBKDF2';
 const DIGEST = 'SHA-256';
-const ITERATIONS = 210_000;
+
+/** Platform ceiling. Exceeding this throws in the deployed Workers runtime. */
+export const MAX_PBKDF2_ITERATIONS = 100_000;
+
+/** Work factor applied to new passwords. */
+export const PASSWORD_ITERATIONS = 100_000;
+
 const SALT_BYTES = 16;
 const KEY_BITS = 256;
 
@@ -65,25 +88,26 @@ export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 /** Hashes a plaintext password for storage in `users.password_hash`. */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-  const digest = await derive(password, salt, ITERATIONS);
+  const digest = await derive(password, salt, PASSWORD_ITERATIONS);
   return [
     'pbkdf2',
     DIGEST.toLowerCase().replace('-', ''),
-    ITERATIONS,
+    PASSWORD_ITERATIONS,
     bytesToBase64Url(salt),
     bytesToBase64Url(digest),
   ].join('$');
 }
 
-/**
- * Verifies a plaintext password against a stored digest.
- *
- * Returns false — rather than throwing — for malformed or unrecognised digests,
- * so a corrupt row cannot be distinguished from a wrong password by a caller.
- */
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+interface ParsedDigest {
+  iterations: number;
+  salt: Uint8Array;
+  expected: Uint8Array;
+}
+
+/** Splits a stored digest, or returns null when it is unrecognised or corrupt. */
+export function parsePasswordHash(stored: string): ParsedDigest | null {
   const parts = stored.split('$');
-  if (parts.length !== 5) return false;
+  if (parts.length !== 5) return null;
 
   const [algorithm, digest, iterationsRaw, saltRaw, expectedRaw] = parts as [
     string,
@@ -93,20 +117,67 @@ export async function verifyPassword(password: string, stored: string): Promise<
     string,
   ];
 
-  if (algorithm !== 'pbkdf2' || digest !== DIGEST.toLowerCase().replace('-', '')) return false;
+  if (algorithm !== 'pbkdf2' || digest !== DIGEST.toLowerCase().replace('-', '')) return null;
 
   const iterations = Number.parseInt(iterationsRaw, 10);
-  if (!Number.isFinite(iterations) || iterations <= 0) return false;
+  if (!Number.isFinite(iterations) || iterations <= 0) return null;
 
-  let salt: Uint8Array;
-  let expected: Uint8Array;
   try {
-    salt = base64UrlToBytes(saltRaw);
-    expected = base64UrlToBytes(expectedRaw);
+    return {
+      iterations,
+      salt: base64UrlToBytes(saltRaw),
+      expected: base64UrlToBytes(expectedRaw),
+    };
   } catch {
+    return null;
+  }
+}
+
+/**
+ * True when a stored digest was produced with a work factor other than the
+ * current one, and should be transparently upgraded on the next successful
+ * sign-in.
+ */
+export function needsRehash(stored: string): boolean {
+  const parsed = parsePasswordHash(stored);
+  return parsed !== null && parsed.iterations !== PASSWORD_ITERATIONS;
+}
+
+/**
+ * Verifies a plaintext password against a stored digest.
+ *
+ * Returns false — never throws — for malformed digests, unrecognised
+ * algorithms, and digests whose work factor this runtime cannot compute. A
+ * corrupt or over-strength row must fail closed, not surface as a 500.
+ */
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const parsed = parsePasswordHash(stored);
+  if (!parsed) return false;
+
+  if (parsed.iterations > MAX_PBKDF2_ITERATIONS) {
+    // Diagnosable server-side; the caller only ever sees a failed sign-in.
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'password digest uses an unsupported iteration count',
+        iterations: parsed.iterations,
+        max: MAX_PBKDF2_ITERATIONS,
+      }),
+    );
     return false;
   }
 
-  const actual = await derive(password, salt, iterations);
-  return timingSafeEqual(actual, expected);
+  try {
+    const actual = await derive(password, parsed.salt, parsed.iterations);
+    return timingSafeEqual(actual, parsed.expected);
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'password verification failed during derivation',
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    return false;
+  }
 }

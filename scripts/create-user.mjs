@@ -3,7 +3,12 @@
  * Creates a user, hashing the password with the exact same scheme the Worker
  * verifies against (src/api/lib/password.ts):
  *
- *   pbkdf2$sha256$210000$<salt base64url>$<digest base64url>
+ *   pbkdf2$sha256$100000$<salt base64url>$<digest base64url>
+ *
+ * The work factor matches PASSWORD_ITERATIONS in src/api/lib/password.ts and must
+ * stay at or below 100,000: Cloudflare's WebCrypto rejects higher counts at
+ * runtime ("iteration counts above 100000 are not supported"), even though a
+ * local workerd will happily compute them.
  *
  * This exists because a fresh database has no users, so there is no way to log
  * in. Run it once after the first migration to create the founding Admin.
@@ -27,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, '..');
 
-const ITERATIONS = 210_000;
+const ITERATIONS = 100_000;
 const KEY_BYTES = 32;
 const SALT_BYTES = 16;
 const DIGEST = 'sha256';
@@ -68,13 +73,14 @@ Create a user for AG Pro Solutions.
 
   pnpm user:create                     interactive; local D1
   pnpm user:create -- --remote         Cloudflare D1 (top-level environment)
-  pnpm user:create -- --remote --env production
+  pnpm user:create -- --update -- --remote    reset an existing password
 
 Options:
   --email <address>    required (prompted if omitted)
-  --name <full name>   required (prompted if omitted)
+  --name <full name>   required when creating (prompted if omitted)
   --role <role>        sales | manager | admin   (default: admin)
   --password <value>   prompted and hidden if omitted
+  --update             reset the password of an existing account
   --remote             target the deployed D1 instead of the local one
   --env <name>         wrangler environment to target
   --db <name>          D1 database name      (default: ${DEFAULT_DATABASE})
@@ -158,6 +164,22 @@ function buildInsert({ email, name, role, passwordHash }) {
 }
 
 /**
+ * Resets the password on an existing account.
+ *
+ * This is the documented way out when someone is locked out — including when a
+ * stored digest was created with a work factor the deployed runtime cannot
+ * compute, which is not fixable by signing in.
+ */
+function buildPasswordReset({ email, name, role, passwordHash }) {
+  const assignments = [`password_hash = ${sqlText(passwordHash)}`];
+  if (name) assignments.push(`name = ${sqlText(name)}`);
+  if (role) assignments.push(`role = ${sqlText(role)}`);
+  assignments.push('updated_at = unixepoch() * 1000');
+
+  return `UPDATE users SET ${assignments.join(', ')} WHERE email = ${sqlText(email)};`;
+}
+
+/**
  * Runs a SQL file through `wrangler d1 execute`.
  *
  * The SQL goes in a temp file rather than a `--command` argument: it avoids
@@ -202,12 +224,16 @@ function executeSql(sql, { database, remote, environment }) {
 /* ── Main ──────────────────────────────────────────────────────────────────── */
 
 try {
+  const resetting = Boolean(flags.update);
+
   const email = String(flags.email ?? (await prompt('Email: '))).trim().toLowerCase();
   if (!email.includes('@')) throw new Error('That does not look like an email address.');
 
-  const name = String(flags.name ?? (await prompt('Full name: '))).trim();
-  if (!name) throw new Error('A name is required.');
+  // A name is required when creating; optional when only resetting a password.
+  const name = String(flags.name ?? (resetting ? '' : await prompt('Full name: '))).trim();
+  if (!name && !resetting) throw new Error('A name is required.');
 
+  const roleExplicit = flags.role !== undefined;
   const role = String(flags.role ?? 'admin').trim().toLowerCase();
   if (!ROLES.has(role)) throw new Error(`Role must be one of: ${[...ROLES].join(', ')}`);
 
@@ -222,22 +248,37 @@ try {
   }
 
   const database = String(flags.db ?? DEFAULT_DATABASE);
-
   const passwordHash = hashPassword(password);
-  const sql = buildInsert({ email, name, role, passwordHash });
 
-  console.log(`\nCreating ${role} "${name}" <${email}>`);
+  const sql = resetting
+    ? buildPasswordReset({
+        email,
+        name,
+        // Only touch the role when it was asked for explicitly.
+        role: roleExplicit ? role : null,
+        passwordHash,
+      })
+    : buildInsert({ email, name, role, passwordHash });
+
+  console.log(
+    `\n${resetting ? 'Resetting password for' : 'Creating'} ${role}${name ? ` "${name}"` : ''} <${email}>`,
+  );
   console.log(
     `Target: ${database} ${flags.remote ? '(remote)' : '(local)'}${flags.env ? ` env=${flags.env}` : ''}`,
   );
 
-  executeSql(sql, {
+  const output = executeSql(sql, {
     database,
     remote: Boolean(flags.remote),
     environment: flags.env ? String(flags.env) : undefined,
   });
 
-  console.log('\nCreated. Sign in with the password you just entered.');
+  if (resetting && /"rows_written":\s*0/.test(output)) {
+    console.error(`\nNo account exists with the email <${email}> — nothing was changed.`);
+    process.exitCode = 1;
+  } else {
+    console.log('\nDone. Sign in with the password you just entered.');
+  }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   const stderr = error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
@@ -245,7 +286,7 @@ try {
 
   if (/UNIQUE constraint failed/i.test(`${message}${stderr}${stdout}`)) {
     console.error(
-      `\nThat email address already exists. Use --email with a different address, or change the existing user's password from the app.`,
+      `\nThat email address already exists. Re-run with --update to reset its password instead.`,
     );
   } else {
     console.error(`\nFailed: ${message}`);

@@ -132,6 +132,12 @@ pnpm user:create -- --remote --env production
 
 It prompts for the email address, full name and a hidden password (minimum 12 characters). Flags are available for scripted use: `--email`, `--name`, `--role`, `--password`, `--remote`, `--env`, `--db`.
 
+Locked out, or need to change a password? Reset it in place:
+
+```bash
+pnpm user:create -- --update --email you@agpro.com
+```
+
 > Changing `database_id` in `wrangler.toml` points Wrangler at a different local D1 store, because local state is keyed by database id. Re-run `pnpm db:migrate:local` after switching.
 
 ### Money and units
@@ -230,7 +236,7 @@ Detection is content-based, not filename-based, and a document no parser recogni
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 68 tests
+pnpm test           # vitest run — 72 tests
 pnpm test:watch     # watch mode
 pnpm typecheck      # react-router typegen + tsc, app + config projects
 pnpm typegen        # regenerate .react-router/types
@@ -303,6 +309,7 @@ Two things to know:
 ## Conventions
 
 - **Deny-by-default access control.** A permission not explicitly granted to a role is forbidden. Middleware and UI both read one matrix so they cannot drift.
+- **Password hashing is capped by the platform.** Digests are PBKDF2-HMAC-SHA256 at **100,000 iterations** — the ceiling Cloudflare's WebCrypto enforces. Higher counts fail at runtime in production (`Pbkdf2 failed: iteration counts above 100000 are not supported`) even though a local `workerd` will happily compute them, so a value that passes every local test can still break sign-in. The iteration count is stored inside each digest, so it can be raised later without invalidating existing passwords; `MAX_PBKDF2_ITERATIONS` is both the work factor and a guard, covered by a test.
 - **Documented deviations.** Where source data contradicted the original specification, the data won.
 - **No secrets in the repository.** Real credentials live in `.dev.vars` locally and `wrangler secret` remotely.
 
