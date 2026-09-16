@@ -28,7 +28,7 @@ function resolveWranglerBin() {
  * a shell can never mangle the statement.
  */
 export function executeSql(sql, options = {}) {
-  const { database = 'agpro-db', local = true, environment } = options;
+  const { database = 'agpro-db', local = true, environment, json = false } = options;
 
   const dir = mkdtempSync(join(tmpdir(), 'agpro-sql-'));
   const file = join(dir, 'statement.sql');
@@ -37,6 +37,7 @@ export function executeSql(sql, options = {}) {
   const args = ['d1', 'execute', database];
   if (environment) args.push('--env', environment);
   args.push(local ? '--local' : '--remote');
+  if (json) args.push('--json');
   args.push('--file', file);
 
   try {
@@ -47,6 +48,24 @@ export function executeSql(sql, options = {}) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Runs a read-only query and returns the rows.
+ *
+ * Wrangler wraps results as an array of per-statement envelopes, and may print
+ * banners around them, so the JSON is located by its outermost brackets rather
+ * than assumed to be the whole of stdout.
+ */
+export function queryRows(sql, options = {}) {
+  const output = executeSql(sql, { ...options, json: true });
+
+  const start = output.indexOf('[');
+  const end = output.lastIndexOf(']');
+  if (start === -1 || end === -1) return [];
+
+  const parsed = JSON.parse(output.slice(start, end + 1));
+  return parsed.flatMap((envelope) => envelope?.results ?? []);
 }
 
 /** Applies pending migrations to the local database. */
