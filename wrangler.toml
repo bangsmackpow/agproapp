@@ -7,7 +7,10 @@
 
 name = "agproapp"
 main = "src/worker.ts"
-compatibility_date = "2026-09-16"
+# Pinned to the newest date supported by the workerd binary bundled with
+# @cloudflare/vitest-pool-workers, so dev, test and production all run the same
+# runtime behaviour.
+compatibility_date = "2026-08-22"
 compatibility_flags = ["nodejs_compat"]
 
 workers_dev = true

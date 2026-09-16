@@ -39,7 +39,7 @@ Attempted access to the checkwriting module by `sales` or `manager` is blocked i
 | Phase | Scope | State |
 |---|---|---|
 | **1** | D1 schema (29 tables), RBAC, pricing engine, worker/config scaffold, migrations + reference seed | ✅ Complete |
-| **2** | Hono gateway: auth, RBAC middleware, CRM/catalog/inventory/invoice/check routes, document parse engine | 🚧 In progress |
+| **2** | Hono gateway: auth, RBAC middleware, CRM/catalog/inventory/invoice/check routes, document parse engine + review queue | ✅ Complete |
 | **3** | Cross-platform UI (React Router SSR + Tailwind + shadcn/ui) | ⏳ Planned |
 | **4** | Print optimization (invoice letter, three-part check stock) + electronic invoice delivery | ⏳ Planned |
 
@@ -161,23 +161,71 @@ Once seeded, the `price_tiers` table is the source of truth — an Admin can adj
 
 ## API
 
-| Route | Description |
-|---|---|
-| `GET /api/health` · `GET /healthz` | Liveness plus live D1 connectivity check |
+All routes other than health require a session cookie. Permission shown is the minimum required; the matrix in `src/shared/rbac.ts` is authoritative.
 
-The Phase 2 surface (`/api/auth`, `/api/customers`, `/api/products`, `/api/inventory`, `/api/invoices`, `/api/checks`, `/api/imports`) is in progress; unrouted paths return a structured `404` rather than an HTML error page.
+| Method & path | Permission | Description |
+|---|---|---|
+| `GET /api/health` · `/healthz` | — | Liveness plus a live D1 round-trip; `503` when the database is unreachable |
+| `POST /api/auth/login` | — | Email + password; issues the httpOnly session cookie |
+| `POST /api/auth/logout` | session | Revokes the session server-side |
+| `GET /api/auth/me` | session | Current user, without the password digest |
+| `POST /api/auth/change-password` | session | Revokes every other session for the account |
+| `GET/POST /api/customers`, `GET/PATCH/DELETE /api/customers/:id` | `crm:read` / `crm:write` / `crm:delete` | CRM; delete is a deactivation |
+| `GET /api/pricing/tiers` | `pricing:read` | Active margin tiers for the composer |
+| `GET/POST /api/products`, `GET/PATCH /api/products/:id` | `inventory:read` / `inventory:write` | Catalogue, searchable by name, SKU, brand or EPA number |
+| `GET/POST /api/inventory/lots` | `inventory:read` / `inventory:write` | Lot-level stock |
+| `POST /api/inventory/lots/:id/adjust` | `inventory:write` | Relative adjustment, applied atomically |
+| `GET/POST /api/drone-units` | `inventory:read` / `inventory:write` | Serialized drone inventory |
+| `GET/POST /api/invoices`, `GET /api/invoices/:id` | `invoices:read` / `invoices:write` | Draft creation with server-resolved pricing and totals |
+| `GET /api/invoices/:id/compliance` | `invoices:read` | Live verdict on the Iowa seed gate |
+| `POST /api/invoices/:id/send` | `invoices:send` | **Draft → Sent. Fails 422 listing any unverified regulated seed line.** |
+| `POST /api/invoices/:id/cancel` | `invoices:cancel` | Sent/Draft → Canceled |
+| `POST /api/invoices/:id/payments` | `invoices:write` | Applies a payment; flips to Paid at zero balance |
+| `GET /api/checks`, `GET /api/checks/:id` | `checks:read` | **Admin only** |
+| `POST /api/checks` | `checks:write` | **Admin only.** Allocates the next check number atomically |
+| `POST /api/checks/:id/print` · `/clear` · `/void` | `checks:print` / `checks:write` / `checks:void` | **Admin only.** Void reverses allocations and restores bill balances |
+| `GET/POST /api/checks/bank-accounts` | `checks:read` / `admin:settings` | **Admin only** |
+| `GET /api/imports/parsers` | `inventory:import` | Available document parsers |
+| `POST /api/imports/batches` | `inventory:import` | Parse a document's extracted text into a review batch |
+| `GET /api/imports/batches`, `GET /api/imports/batches/:id` | `inventory:read` | Review queue |
+| `PATCH /api/imports/drafts/:id` | `inventory:import` | Correct a staged row |
+| `POST /api/imports/batches/:id/commit` · `/reject` | `inventory:import` | Commit reviewed rows to their target tables |
+
+Unrouted paths return a structured JSON `404`, never an HTML error page.
+
+### Document ingestion
+
+`POST /api/imports/batches` accepts the **extracted text** of a document, not the binary. OCR, a vendor API, or a pasted body are interchangeable upstream concerns, which keeps the parsers pure and unit-testable.
+
+| Parser key | Recognises | Extracts |
+|---|---|---|
+| `channel_bol_v1` | Channel / Product Supply Seeds straight BOL | **BOL/CMR Number**, **Order Number**, shipper no., Seed NO., PO, lot, material codes, quantities |
+| `wickman_invoice_v1` | Wickman Chemical | Invoice #, dates, PO, line items with EPA numbers lifted from descriptions |
+| `atticus_invoice_v1` | Atticus LLC | Invoice #, terms, PO reference, item #, qty, unit price, amount |
+| `ib_ag_supply_order_v1` | I & B Ag Supply | Sales order #, totals, line items with unit price and amount |
+
+Detection is content-based, not filename-based, and a document no parser recognises is refused with a `422` rather than guessed at. Parser output is staged as `import_drafts`; nothing reaches live inventory until a human commits it.
 
 ---
 
 ## Testing
 
 ```bash
-pnpm test           # vitest run
+pnpm test           # vitest run  — 59 tests
 pnpm test:watch     # watch mode
 pnpm typecheck      # tsc, app + config projects
 ```
 
-Parser and pricing logic is covered by unit tests; routes are covered against a real D1 instance via `@cloudflare/vitest-pool-workers`.
+Tests run **inside workerd** via `@cloudflare/vitest-pool-workers`, so they exercise the real runtime, the real Hono app and a real per-run D1 with the migrations applied. There is no mocking layer between the tests and production behaviour.
+
+Coverage is deliberately weighted towards the things that lose money or break the law if they are wrong:
+
+- **Parser extraction** against fixtures mirroring the real scanned documents, including their quirks (unassigned-lot slash runs, densities embedded in item descriptions, an invoice whose printed total disagrees with its own lines).
+- **Money arithmetic** — integer-cent multipliers, acreage totals, discount apportionment, tax.
+- **Auth** — wrong password and unknown account produce an identical response; logout genuinely revokes.
+- **RBAC** — sales blocked from inventory writes and from importing; managers allowed; checkwriting denied to both sales and managers.
+- **Check numbering** — strictly increasing, and five concurrent requests produce five distinct numbers.
+- **The Iowa seed gate** — a regulated seed invoice cannot leave Draft until its BOL/CMR and Order Number tokens are recorded *and* verified.
 
 ---
 
@@ -185,16 +233,30 @@ Parser and pricing logic is covered by unit tests; routes are covered against a 
 
 ```
 src/
-├── worker.ts            Worker entry; mounts the Hono app
-├── env.ts               Bindings and Hono environment types
+├── worker.ts            Worker entry; the Hono app is the exported handler
+├── env.ts               Bindings (from generated Cloudflare.Env) + Hono env
 ├── shared/              Domain enums, RBAC matrix, pricing helpers
 ├── db/
 │   ├── schema.ts        Drizzle schema (single source of truth)
-│   └── index.ts         Per-request Drizzle client factory
-├── api/                 Hono app, middleware, route groups        (Phase 2)
-└── services/            Pricing, invoicing, checkwriting, parsers (Phase 2)
+│   ├── index.ts         Per-request Drizzle client factory
+│   └── errors.ts        Driver-error classification (through Drizzle's wrapper)
+├── api/
+│   ├── app.ts           App assembly: middleware, route mounting, error handling
+│   ├── middleware.ts    Request context, requireAuth, requirePermission, requireAdmin
+│   ├── schemas.ts       Every request contract, validated with Zod
+│   ├── lib/             HTTP errors, PBKDF2 passwords, session tokens
+│   └── routes/          auth, customers, catalog, invoices, checks, imports, health
+└── services/
+    ├── pricing.ts       Tier and program-price lookups (DB is source of truth)
+    ├── invoicing.ts     Line pricing, totals, numbering, compliance gate
+    ├── checkwriting.ts  Check numbering, allocations, void reversal
+    ├── imports.ts       Staging, payload contracts, commit engine
+    ├── audit.ts         Non-fatal audit trail writes
+    └── parsers/         text utils, Channel BOL, vendor invoices, registry
 migrations/              Drizzle-generated SQL migrations
 seed/                    Idempotent reference data
+test/                    Runtime integration tests (workerd + D1)
+worker-configuration.d.ts  Generated by `pnpm types` — do not edit by hand
 docs/                    Local source documents (images/XLSX are gitignored)
 ```
 
@@ -208,6 +270,11 @@ pnpm deploy:production    # wrangler deploy --env production
 ```
 
 For dashboard-driven deploys, connect this repository to a Worker, leave the root directory empty (`wrangler.toml` is at the repo root), and set the deploy command to `pnpm run deploy`.
+
+Two things to know:
+
+- Run `pnpm types` after editing `wrangler.toml`. It regenerates `worker-configuration.d.ts`, which is where the binding types come from — bindings therefore cannot drift from the configuration.
+- `compatibility_date` is pinned to the newest date supported by the `workerd` binary shipped with `@cloudflare/vitest-pool-workers`, so dev, test and production all execute identical runtime behaviour. Raise it deliberately, in step with a dependency update.
 
 ---
 
