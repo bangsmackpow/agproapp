@@ -7,6 +7,9 @@ docs/*.png
 docs/*.pdf
 docs/*.xlsx
 docs/*.xls
+# CSV exports of the price sheets: vendor costs are commercially sensitive.
+docs/csv/
+docs/*.csv
 
 # ── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
