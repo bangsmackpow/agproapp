@@ -98,8 +98,24 @@ export async function hashPassword(password: string): Promise<string> {
   ].join('$');
 }
 
-interface ParsedDigest {
-  iterations: number;
+/**
+ * A syntactically valid digest that no password will ever produce.
+ *
+ * Verifying an unknown account against this keeps the failure path's cost equal
+ * to a real verification. The work factor is derived from PASSWORD_ITERATIONS
+ * rather than written out, because a dummy digest that skips derivation would
+ * make the unknown-account path measurably faster and turn sign-in into an
+ * account-existence oracle.
+ */
+export const DUMMY_PASSWORD_HASH = [
+  'pbkdf2',
+  DIGEST.toLowerCase().replace('-', ''),
+  PASSWORD_ITERATIONS,
+  bytesToBase64Url(new Uint8Array(SALT_BYTES).fill(0x5a)),
+  bytesToBase64Url(new Uint8Array(KEY_BITS / 8).fill(0xa5)),
+].join('$');
+
+interface ParsedDigest {  iterations: number;
   salt: Uint8Array;
   expected: Uint8Array;
 }

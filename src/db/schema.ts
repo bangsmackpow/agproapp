@@ -114,8 +114,7 @@ export const sessions = sqliteTable(
 );
 
 /** Administrative trail. Backs the Admin-exclusive "system configuration logs". */
-export const auditLogs = sqliteTable(
-  'audit_logs',
+export const auditLogs = sqliteTable(  'audit_logs',
   {
     id: primaryId(),
     actorUserId: text('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -130,6 +129,32 @@ export const auditLogs = sqliteTable(
     index('audit_logs_actor_idx').on(t.actorUserId),
     index('audit_logs_entity_idx').on(t.entityType, t.entityId),
     index('audit_logs_created_idx').on(t.createdAt),
+  ],
+);
+
+/**
+ * Sign-in attempts. Append-only.
+ *
+ * Backs brute-force protection and gives an internal tool a usable answer to
+ * "who has been trying to get in". Held in D1 rather than KV because KV
+ * serialises writes to a single key to roughly one per second, which is exactly
+ * the access pattern a credential-stuffing run produces.
+ */
+export const loginAttempts = sqliteTable(
+  'login_attempts',
+  {
+    id: primaryId(),
+    /** Normalised (lower-cased) email, whether or not the account exists. */
+    email: text('email').notNull(),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    success: integer('success', { mode: 'boolean' }).notNull().default(false),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(unixMs),
+  },
+  (t) => [
+    index('login_attempts_email_created_idx').on(t.email, t.createdAt),
+    index('login_attempts_ip_created_idx').on(t.ipAddress, t.createdAt),
+    index('login_attempts_created_idx').on(t.createdAt),
   ],
 );
 
@@ -1139,6 +1164,7 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
+export type LoginAttempt = typeof loginAttempts.$inferSelect;
 export type CompanySettings = typeof companySettings.$inferSelect;
 
 export type Customer = typeof customers.$inferSelect;

@@ -5,8 +5,8 @@ import { deleteCookie, setCookie } from 'hono/cookie';
 import { createDb } from '../../db';
 import { auditLogs, sessions, users, type User } from '../../db/schema';
 import type { AppEnv } from '../../env';
-import { badRequest, parseJson, unauthorized } from '../lib/http';
-import { hashPassword, verifyPassword } from '../lib/password';
+import { badRequest, errorBody, parseJson, unauthorized } from '../lib/http';
+import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from '../lib/password';
 import {
   SESSION_COOKIE_NAME,
   generateSessionToken,
@@ -16,17 +16,22 @@ import {
 } from '../lib/session';
 import { changePasswordSchema, loginSchema } from '../schemas';
 import { requireAuth } from '../middleware';
+import {
+  checkLoginRateLimit,
+  clearLoginFailures,
+  pruneLoginAttempts,
+  recordLoginAttempt,
+} from '../../services/login-rate-limit';
+import { recordAudit } from '../../services/audit';
 
 export const authRoutes = new Hono<AppEnv>();
 
-/**
- * A syntactically valid digest that no password will ever produce. Verifying
- * against it when the account is unknown keeps the failure path's timing
- * indistinguishable from a wrong-password failure, so login cannot be used to
- * enumerate accounts.
- */
-const DUMMY_HASH =
-  'pbkdf2$sha256$210000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+/** Human-readable wait for a rate-limited sign-in. */
+function formatWait(seconds: number): string {
+  if (seconds < 60) return 'less than a minute';
+  const minutes = Math.ceil(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
 
 /** Strips the password digest before a user object leaves the Worker. */
 export function publicUser(user: User) {
@@ -37,14 +42,51 @@ export function publicUser(user: User) {
 authRoutes.post('/login', async (c) => {
   const { email, password } = await parseJson(c.req.raw, loginSchema);
   const db = createDb(c.env.DB);
+  const ipAddress = c.req.header('cf-connecting-ip') ?? null;
+  const userAgent = c.req.header('user-agent') ?? null;
+
+  // Checked before the account lookup: a limited response must be returned
+  // whether or not the address exists, or rate limiting becomes an oracle for
+  // discovering valid accounts.
+  const limit = await checkLoginRateLimit(db, { email, ipAddress });
+
+  if (limit.limited) {
+    await recordAudit(db, {
+      action: 'auth.login_rate_limited',
+      entityType: 'user',
+      entityId: null,
+      metadata: {
+        email,
+        reason: limit.reason ?? null,
+        retryAfterSeconds: limit.retryAfterSeconds,
+      },
+      ipAddress,
+    });
+
+    return c.json(
+      errorBody(
+        'rate_limited',
+        `Too many sign-in attempts. Try again in ${formatWait(limit.retryAfterSeconds)}.`,
+      ),
+      429,
+      { 'retry-after': String(limit.retryAfterSeconds) },
+    );
+  }
 
   const user = await db.select().from(users).where(eq(users.email, email)).get();
 
-  const passwordMatches = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
+  const passwordMatches = await verifyPassword(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
 
   if (!user || !user.isActive || !passwordMatches) {
+    await recordLoginAttempt(db, { email, ipAddress, userAgent, success: false });
     throw unauthorized('Invalid email or password');
   }
+
+  await recordLoginAttempt(db, { email, ipAddress, userAgent, success: true });
+  // A successful sign-in clears the account's recent failures; retention pruning
+  // rides along here rather than needing a scheduled trigger.
+  await clearLoginFailures(db, email);
+  await pruneLoginAttempts(db);
 
   const token = generateSessionToken();
   const tokenHash = await hashSessionToken(token);

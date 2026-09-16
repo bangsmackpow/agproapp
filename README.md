@@ -191,7 +191,7 @@ All routes other than health require a session cookie. Permission shown is the m
 | Method & path | Permission | Description |
 |---|---|---|
 | `GET /api/health` · `/healthz` | — | Liveness plus a live D1 round-trip; `503` when the database is unreachable |
-| `POST /api/auth/login` | — | Email + password; issues the httpOnly session cookie |
+| `POST /api/auth/login` | — | Email + password; issues the httpOnly session cookie. Returns `429` with `Retry-After` when rate limited |
 | `POST /api/auth/logout` | session | Revokes the session server-side |
 | `GET /api/auth/me` | session | Current user, without the password digest |
 | `POST /api/auth/change-password` | session | Revokes every other session for the account |
@@ -236,7 +236,7 @@ Detection is content-based, not filename-based, and a document no parser recogni
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 72 tests
+pnpm test           # vitest run — 78 tests
 pnpm test:watch     # watch mode
 pnpm typecheck      # react-router typegen + tsc, app + config projects
 pnpm typegen        # regenerate .react-router/types
@@ -249,6 +249,7 @@ Coverage is deliberately weighted towards the things that lose money or break th
 - **Parser extraction** against fixtures mirroring the real scanned documents, including their quirks (unassigned-lot slash runs, densities embedded in item descriptions, an invoice whose printed total disagrees with its own lines).
 - **Money arithmetic** — integer-cent multipliers, acreage totals, discount apportionment, tax.
 - **Auth** — wrong password and unknown account produce an identical response; logout genuinely revokes.
+- **Brute-force protection** — repeated failures lock the account, the lock holds even against the correct password, unrelated accounts are unaffected, and a successful sign-in clears the failure count.
 - **RBAC** — sales blocked from inventory writes and from importing; managers allowed; checkwriting denied to both sales and managers.
 - **Check numbering** — strictly increasing, and five concurrent requests produce five distinct numbers.
 - **The Iowa seed gate** — a regulated seed invoice cannot leave Draft until its BOL/CMR and Order Number tokens are recorded *and* verified.
@@ -310,6 +311,7 @@ Two things to know:
 
 - **Deny-by-default access control.** A permission not explicitly granted to a role is forbidden. Middleware and UI both read one matrix so they cannot drift.
 - **Password hashing is capped by the platform.** Digests are PBKDF2-HMAC-SHA256 at **100,000 iterations** — the ceiling Cloudflare's WebCrypto enforces. Higher counts fail at runtime in production (`Pbkdf2 failed: iteration counts above 100000 are not supported`) even though a local `workerd` will happily compute them, so a value that passes every local test can still break sign-in. The iteration count is stored inside each digest, so it can be raised later without invalidating existing passwords; `MAX_PBKDF2_ITERATIONS` is both the work factor and a guard, covered by a test.
+- **Sign-in is rate limited.** Failures are counted over a rolling 15-minute window, per account (10) and per source IP (50), and lockouts are written to the audit trail. Two consequences worth knowing: a successful sign-in clears the account's recent failures, and a limit response is returned *before* the account lookup so it cannot be used to discover which addresses exist. The unknown-account path verifies against `DUMMY_PASSWORD_HASH`, whose work factor is derived from `PASSWORD_ITERATIONS` — if it were cheaper, login would leak account existence through timing.
 - **Documented deviations.** Where source data contradicted the original specification, the data won.
 - **No secrets in the repository.** Real credentials live in `.dev.vars` locally and `wrangler secret` remotely.
 

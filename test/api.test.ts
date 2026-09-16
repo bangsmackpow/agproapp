@@ -1,5 +1,5 @@
 import { env, SELF } from 'cloudflare:test';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { hashPassword } from '../src/api/lib/password';
@@ -13,18 +13,23 @@ import {
   invoiceItems,
   invoiceSequences,
   iowaComplianceLogs,
+  loginAttempts,
   priceTiers,
   products,
   users,
 } from '../src/db/schema';
 import { PRICE_TIER_KEYS } from '../src/shared/enums';
 import { DEFAULT_TIER_MULTIPLIERS, PRICE_TIER_LABELS } from '../src/shared/pricing';
+import { MAX_FAILURES_PER_EMAIL } from '../src/services/login-rate-limit';
 
 const PASSWORD = 'correct horse battery staple';
 
 const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
 const SALES_ID = '22222222-2222-4222-8222-222222222222';
 const MANAGER_ID = '33333333-3333-4333-8333-333333333333';
+/** Dedicated account for lockout tests, so they cannot lock out other suites. */
+const LOCKABLE_ID = '33333333-3333-4333-8333-333333333334';
+const LOCKABLE_EMAIL = 'lockable@agpro.test';
 const CUSTOMER_ID = '44444444-4444-4444-8444-444444444444';
 const SEED_PRODUCT_ID = '55555555-5555-4555-8555-555555555555';
 const BANK_ACCOUNT_ID = '66666666-6666-4666-8666-666666666666';
@@ -67,6 +72,7 @@ beforeAll(async () => {
     { id: ADMIN_ID, email: 'admin@agpro.test', name: 'Ada Admin', role: 'admin', passwordHash },
     { id: SALES_ID, email: 'sales@agpro.test', name: 'Sam Sales', role: 'sales', passwordHash },
     { id: MANAGER_ID, email: 'manager@agpro.test', name: 'Mia Manager', role: 'manager', passwordHash },
+    { id: LOCKABLE_ID, email: LOCKABLE_EMAIL, name: 'Lockable User', role: 'sales', passwordHash },
   ]);
 
   await db.insert(companySettings).values({ legalName: 'AG Pro Solutions LLC' });
@@ -463,5 +469,65 @@ describe('Iowa seed compliance gate', () => {
     }
 
     expect(duplicateRejected).toBe(true);
+  });
+});
+
+describe('sign-in brute-force protection', () => {
+  // Failures are counted per email (10) and per source IP (50). These tests stay
+  // well inside the IP budget; if you add many more failure-driven tests, the IP
+  // window will start tripping and the cause will not be obvious.
+  async function attempt(email: string, password: string): Promise<Response> {
+    return api('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+  }
+
+  it('clears recent failures after a successful sign-in', async () => {
+    for (let i = 0; i < 3; i += 1) {
+      expect((await attempt('admin@agpro.test', 'wrong password entirely')).status).toBe(401);
+    }
+
+    expect((await attempt('admin@agpro.test', PASSWORD)).status).toBe(200);
+
+    const db = createDb(env.DB);
+    const remaining = await db
+      .select({ total: sql<number>`count(*)` })
+      .from(loginAttempts)
+      .where(and(eq(loginAttempts.email, 'admin@agpro.test'), eq(loginAttempts.success, false)))
+      .get();
+
+    expect(Number(remaining?.total ?? 0)).toBe(0);
+  });
+
+  it('locks an account after repeated failures, and the lock holds against the correct password', async () => {
+    let response: Response | undefined;
+
+    for (let i = 0; i <= MAX_FAILURES_PER_EMAIL; i += 1) {
+      response = await attempt(LOCKABLE_EMAIL, 'wrong password entirely');
+    }
+
+    expect(response?.status).toBe(429);
+    expect(Number(response?.headers.get('retry-after'))).toBeGreaterThan(0);
+
+    const body = (await response?.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('rate_limited');
+    expect(body.error.message).toContain('Too many sign-in attempts');
+
+    // The lockout is real, not just failure counting: the right password is
+    // refused while the window is open.
+    expect((await attempt(LOCKABLE_EMAIL, PASSWORD)).status).toBe(429);
+  });
+
+  it('does not lock unrelated accounts', async () => {
+    expect((await attempt('sales@agpro.test', PASSWORD)).status).toBe(200);
+  });
+
+  it('answers identically for an unknown account, so the limit is not an oracle', async () => {
+    const unknown = await attempt('nobody-at-all@agpro.test', 'wrong password entirely');
+
+    expect(unknown.status).toBe(401);
+    const body = (await unknown.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('Invalid email or password');
   });
 });

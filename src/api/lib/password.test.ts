@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DUMMY_PASSWORD_HASH,
   hashPassword,
   MAX_PBKDF2_ITERATIONS,
   needsRehash,
@@ -116,6 +117,20 @@ describe('parsePasswordHash / needsRehash', () => {
   it('flags a digest whose work factor differs from the current one', async () => {
     expect(needsRehash(OVER_CAP_HASH)).toBe(true);
     expect(needsRehash(await hashPassword(PASSWORD))).toBe(false);
+  });
+});
+
+describe('DUMMY_PASSWORD_HASH', () => {
+  it('uses the current work factor, so the unknown-account path costs the same as a real check', async () => {
+    // If this drifted to a work factor the runtime cannot compute, verifyPassword
+    // would bail out early and the failure path would become measurably faster —
+    // turning sign-in into an account-existence oracle.
+    expect(parsePasswordHash(DUMMY_PASSWORD_HASH)?.iterations).toBe(PASSWORD_ITERATIONS);
+  });
+
+  it('never verifies against any password', async () => {
+    await expect(verifyPassword(PASSWORD, DUMMY_PASSWORD_HASH)).resolves.toBe(false);
+    await expect(verifyPassword('', DUMMY_PASSWORD_HASH)).resolves.toBe(false);
   });
 });
 
