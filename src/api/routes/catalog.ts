@@ -3,7 +3,14 @@ import { Hono } from 'hono';
 
 import { createDb } from '../../db';
 import { isUniqueConstraintError } from '../../db/errors';
-import { droneUnits, inventoryLots, products } from '../../db/schema';
+import {
+  applicationPrograms,
+  droneUnits,
+  inventoryLots,
+  products,
+  programIngredients,
+  programPrices,
+} from '../../db/schema';
 import type { AppEnv } from '../../env';
 import { conflict, notFound, parseJson, parseQuery } from '../lib/http';
 import { requireAuth, requirePermission } from '../middleware';
@@ -32,8 +39,65 @@ catalogRoutes.get('/pricing/tiers', requirePermission('pricing:read'), async (c)
   return c.json({ data: await listActiveTiers(db) });
 });
 
-/* ── Products ──────────────────────────────────────────────────────────────── */
+/**
+ * Application programs (per-acre blends) with the prices currently in force.
+ *
+ * This is the sellable unit for chemical work, so the invoice composer needs it:
+ * a program line is priced per acre from `program_prices`, not from a flat
+ * per-product price.
+ */
+catalogRoutes.get('/programs', requirePermission('pricing:read'), async (c) => {
+  const db = createDb(c.env.DB);
+  const on = new Date();
 
+  const [programs, tiers, prices, ingredients] = await Promise.all([
+    db
+      .select()
+      .from(applicationPrograms)
+      .where(eq(applicationPrograms.isActive, true))
+      .orderBy(asc(applicationPrograms.name))
+      .all(),
+    listActiveTiers(db),
+    db.select().from(programPrices).all(),
+    db.select({ programId: programIngredients.programId }).from(programIngredients).all(),
+  ]);
+
+  const tierKeyById = new Map(tiers.map((tier) => [tier.id, tier.key]));
+
+  const pricesByProgram = new Map<string, Record<string, number>>();
+  for (const row of prices) {
+    const tierKey = tierKeyById.get(row.tierId);
+    if (!tierKey) continue;
+
+    const effective =
+      row.effectiveFrom.getTime() <= on.getTime() &&
+      (row.effectiveTo === null || row.effectiveTo.getTime() > on.getTime());
+    if (!effective) continue;
+
+    const bucket = pricesByProgram.get(row.programId) ?? {};
+    bucket[tierKey] = row.pricePerAcreCents;
+    pricesByProgram.set(row.programId, bucket);
+  }
+
+  const ingredientCounts = new Map<string, number>();
+  for (const row of ingredients) {
+    ingredientCounts.set(row.programId, (ingredientCounts.get(row.programId) ?? 0) + 1);
+  }
+
+  return c.json({
+    data: programs.map((program) => ({
+      id: program.id,
+      name: program.name,
+      crop: program.crop,
+      stage: program.stage,
+      defaultApplicationMethod: program.defaultApplicationMethod,
+      ingredientCount: ingredientCounts.get(program.id) ?? 0,
+      pricesByTier: pricesByProgram.get(program.id) ?? {},
+    })),
+  });
+});
+
+/* ── Products ──────────────────────────────────────────────────────────────── */
 catalogRoutes.get('/products', requirePermission('inventory:read'), async (c) => {
   const { q, limit, offset, includeInactive, type } = parseQuery(
     new URL(c.req.url),

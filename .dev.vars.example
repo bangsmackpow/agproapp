@@ -1,6 +1,8 @@
 # Copy to `.dev.vars` for local development: `cp .dev.vars.example .dev.vars`
 # `.dev.vars` is gitignored. Never commit real secrets.
 
+# Overrides the deployed `ENVIRONMENT = "production"` from wrangler.toml, so
+# session cookies are not marked Secure over plain http://localhost.
 ENVIRONMENT=development
 
 # ── Auth / sessions ──────────────────────────────────────────────────────────

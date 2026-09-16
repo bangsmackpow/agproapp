@@ -15,6 +15,10 @@ export default defineConfig(async () => {
   return {
     plugins: [
       cloudflareTest({
+        // Test the API entry directly, not the combined Worker: the React Router
+        // server build is a virtual module that only exists after a Vite build,
+        // and the API surface is what needs the runtime coverage.
+        main: './src/worker.ts',
         wrangler: { configPath: './wrangler.toml' },
         miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
       }),

@@ -40,7 +40,7 @@ Attempted access to the checkwriting module by `sales` or `manager` is blocked i
 |---|---|---|
 | **1** | D1 schema (29 tables), RBAC, pricing engine, worker/config scaffold, migrations + reference seed | ✅ Complete |
 | **2** | Hono gateway: auth, RBAC middleware, CRM/catalog/inventory/invoice/check routes, document parse engine + review queue | ✅ Complete |
-| **3** | Cross-platform UI (React Router SSR + Tailwind + shadcn/ui) | ⏳ Planned |
+| **3** | Cross-platform UI: React Router SSR + Tailwind, login, role-aware shell, and screens for CRM, inventory, invoicing, checkwriting and imports | ✅ Complete |
 | **4** | Print optimization (invoice letter, three-part check stock) + electronic invoice delivery | ⏳ Planned |
 
 ---
@@ -57,7 +57,7 @@ Attempted access to the checkwriting module by `sales` or `manager` is blocked i
 | Object storage | Cloudflare R2 (source documents) |
 | Cache / rate limiting | Cloudflare KV |
 | Language | TypeScript (strict) |
-| UI (Phase 3) | React Router v7 + Tailwind CSS + shadcn/ui |
+| UI | React Router v7+ (framework mode, SSR) + Tailwind CSS v4; shadcn/ui-idiom primitives |
 | Tests | Vitest + `@cloudflare/vitest-pool-workers` |
 
 ---
@@ -67,17 +67,22 @@ Attempted access to the checkwriting module by `sales` or `manager` is blocked i
 **Prerequisites:** Node.js 20+, pnpm 10+, a Cloudflare account.
 
 ```bash
-pnpm install
-pnpm dev            # wrangler dev on http://localhost:8787
+pnpm dev            # vite dev — Worker + SSR on http://localhost:5173
+pnpm build          # react-router build
+pnpm preview        # serve the production build locally
 ```
 
 Verify the Worker and its D1 binding:
 
 ```bash
-curl http://localhost:8787/api/health
+curl http://localhost:5173/api/health
 ```
 
 A healthy response reports `"status": "ok"` and `"checks": { "database": "ok" }`. If D1 is unreachable you get a `503` with the underlying error instead of a false positive.
+
+### Environment model
+
+There is one deployment target. Locally you run against a local D1; the top-level configuration in `wrangler.toml` is what ships to Cloudflare. `.dev.vars` overrides `ENVIRONMENT` to `development` so session cookies are not marked `Secure` over plain HTTP.
 
 ### Configuration
 
@@ -225,9 +230,10 @@ Detection is content-based, not filename-based, and a document no parser recogni
 ## Testing
 
 ```bash
-pnpm test           # vitest run  — 59 tests
+pnpm test           # vitest run — 68 tests
 pnpm test:watch     # watch mode
-pnpm typecheck      # tsc, app + config projects
+pnpm typecheck      # react-router typegen + tsc, app + config projects
+pnpm typegen        # regenerate .react-router/types
 ```
 
 Tests run **inside workerd** via `@cloudflare/vitest-pool-workers`, so they exercise the real runtime, the real Hono app and a real per-run D1 with the migrations applied. There is no mocking layer between the tests and production behaviour.
@@ -246,27 +252,26 @@ Coverage is deliberately weighted towards the things that lose money or break th
 ## Project layout
 
 ```
-src/
-├── worker.ts            Worker entry; the Hono app is the exported handler
-├── env.ts               Bindings (from generated Cloudflare.Env) + Hono env
+workers/
+└── app.ts               Worker entry: /api/* -> Hono, everything else -> React Router SSR
+app/                     React Router UI
+├── root.tsx             Document shell + error boundary
+├── routes.ts            Route table
+├── app.css              Tailwind v4 entry and design tokens
+├── components/ui.tsx    Shared primitives (button, field, card, table, badge…)
+├── lib/
+│   ├── api.server.ts    Calls the Hono app in-isolate; session and RBAC helpers
+│   └── utils.ts         Class merging and money/date formatting
+└── routes/              login, shell, dashboard, customers, inventory,
+                         invoices, invoice-detail, checks, imports
+src/                     API and domain layer
+├── worker.ts            API-only entry, used by the test harness
+├── env.ts               Bindings (generated) + Hono environment
 ├── shared/              Domain enums, RBAC matrix, pricing helpers
-├── db/
-│   ├── schema.ts        Drizzle schema (single source of truth)
-│   ├── index.ts         Per-request Drizzle client factory
-│   └── errors.ts        Driver-error classification (through Drizzle's wrapper)
-├── api/
-│   ├── app.ts           App assembly: middleware, route mounting, error handling
-│   ├── middleware.ts    Request context, requireAuth, requirePermission, requireAdmin
-│   ├── schemas.ts       Every request contract, validated with Zod
-│   ├── lib/             HTTP errors, PBKDF2 passwords, session tokens
-│   └── routes/          auth, customers, catalog, invoices, checks, imports, health
-└── services/
-    ├── pricing.ts       Tier and program-price lookups (DB is source of truth)
-    ├── invoicing.ts     Line pricing, totals, numbering, compliance gate
-    ├── checkwriting.ts  Check numbering, allocations, void reversal
-    ├── imports.ts       Staging, payload contracts, commit engine
-    ├── audit.ts         Non-fatal audit trail writes
-    └── parsers/         text utils, Channel BOL, vendor invoices, registry
+├── db/                  Drizzle schema, client factory, driver-error classification
+├── api/                 Hono app, middleware, request schemas, routes
+└── services/            Pricing, invoicing, checkwriting, imports, parsers
+scripts/create-user.mjs  Bootstrap CLI for the founding Admin
 migrations/              Drizzle-generated SQL migrations
 seed/                    Idempotent reference data
 test/                    Runtime integration tests (workerd + D1)
@@ -274,13 +279,16 @@ worker-configuration.d.ts  Generated by `pnpm types` — do not edit by hand
 docs/                    Local source documents (images/XLSX are gitignored)
 ```
 
+### How the UI talks to the API
+
+Loaders and actions call the Hono app **in the same isolate** (`app/lib/api.server.ts`) rather than over HTTP, forwarding the caller's session cookie. There is therefore one implementation of every business rule and no duplicated authorisation logic — the UI can only do what the API already permits. The API remains the authority; hiding a control is a convenience, not a control.
+
 ---
 
 ## Deployment
 
 ```bash
-pnpm deploy:staging       # wrangler deploy --env staging
-pnpm deploy:production    # wrangler deploy --env production
+pnpm deploy               # react-router build && wrangler deploy
 ```
 
 For dashboard-driven deploys, connect this repository to a Worker, leave the root directory empty (`wrangler.toml` is at the repo root), and set the deploy command to `pnpm run deploy`.
