@@ -20,22 +20,11 @@
  * Flags: --email --name --role --password --remote --env --db --help
  */
 
-import { execFileSync } from 'node:child_process';
-import { randomBytes, pbkdf2Sync } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
 
-const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = resolve(SCRIPT_DIR, '..');
+import { executeSql } from './lib/d1.mjs';
+import { hashPassword, sqlText } from './lib/password.mjs';
 
-const ITERATIONS = 100_000;
-const KEY_BYTES = 32;
-const SALT_BYTES = 16;
-const DIGEST = 'sha256';
 const MIN_PASSWORD_LENGTH = 12;
 const ROLES = new Set(['sales', 'manager', 'admin']);
 const DEFAULT_DATABASE = 'agpro-db';
@@ -136,23 +125,7 @@ function promptHidden(question) {
   });
 }
 
-/* ── Hashing (kept byte-compatible with src/api/lib/password.ts) ───────────── */
-
-function hashPassword(password) {
-  const salt = randomBytes(SALT_BYTES);
-  const digest = pbkdf2Sync(password, salt, ITERATIONS, KEY_BYTES, DIGEST);
-  return [
-    'pbkdf2',
-    DIGEST,
-    ITERATIONS,
-    salt.toString('base64url'),
-    digest.toString('base64url'),
-  ].join('$');
-}
-
 /* ── SQL ───────────────────────────────────────────────────────────────────── */
-
-const sqlText = (value) => `'${String(value).replace(/'/g, "''")}'`;
 
 function buildInsert({ email, name, role, passwordHash }) {
   // A fixed id keeps re-running idempotent-ish and makes the row easy to find.
@@ -177,48 +150,6 @@ function buildPasswordReset({ email, name, role, passwordHash }) {
   assignments.push('updated_at = unixepoch() * 1000');
 
   return `UPDATE users SET ${assignments.join(', ')} WHERE email = ${sqlText(email)};`;
-}
-
-/**
- * Runs a SQL file through `wrangler d1 execute`.
- *
- * The SQL goes in a temp file rather than a `--command` argument: it avoids
- * Windows command-line quoting and length limits, and it means neither the
- * password hash nor the email can be mangled by a shell.
- */
-function executeSql(sql, { database, remote, environment }) {
-  const localBin = join(PROJECT_ROOT, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
-  let wranglerBin = existsSync(localBin) ? localBin : null;
-
-  if (!wranglerBin) {
-    try {
-      wranglerBin = createRequire(import.meta.url).resolve('wrangler/bin/wrangler.js');
-    } catch {
-      wranglerBin = null;
-    }
-  }
-
-  if (!wranglerBin) {
-    throw new Error('Could not locate wrangler. Run `pnpm install` first.');
-  }
-
-  const dir = mkdtempSync(join(tmpdir(), 'agpro-create-user-'));
-  const file = join(dir, 'create-user.sql');
-  writeFileSync(file, sql, 'utf8');
-
-  const args = ['d1', 'execute', database];
-  if (environment) args.push('--env', environment);
-  args.push(remote ? '--remote' : '--local');
-  args.push('--file', file);
-
-  try {
-    return execFileSync(process.execPath, [wranglerBin, ...args], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      encoding: 'utf8',
-    });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 }
 
 /* ── Main ──────────────────────────────────────────────────────────────────── */
@@ -269,7 +200,7 @@ try {
 
   const output = executeSql(sql, {
     database,
-    remote: Boolean(flags.remote),
+    local: !flags.remote,
     environment: flags.env ? String(flags.env) : undefined,
   });
 

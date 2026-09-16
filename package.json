@@ -18,6 +18,7 @@
     "typecheck": "react-router typegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke": "react-router build && node scripts/smoke.mjs",
     "types": "wrangler types",
     "user:create": "node scripts/create-user.mjs",
     "db:generate": "drizzle-kit generate",
