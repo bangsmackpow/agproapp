@@ -1,8 +1,8 @@
-import { Form, NavLink, Outlet, redirect } from 'react-router';
-import type { ActionFunctionArgs, LoaderFunctionArgs } from 'react-router';
+import { Form, NavLink, Outlet } from 'react-router';
+import type { LoaderFunctionArgs } from 'react-router';
 
 import { Badge, Button } from '../components/ui';
-import { extractSetCookie, getEnv, rawApi, requireUser, type SessionUser } from '../lib/api.server';
+import { getEnv, requireUser, type SessionUser } from '../lib/api.server';
 import { ROLE_LABELS, can, canAccessCheckwriting } from '../../src/shared/rbac';
 import { cn } from '../lib/utils';
 
@@ -13,15 +13,6 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   const env = getEnv(context);
   const user = await requireUser(env, request);
   return { user };
-}
-
-export async function action({ request, context }: ActionFunctionArgs) {
-  const env = getEnv(context);
-
-  const response = await rawApi(env, request, '/auth/logout', { method: 'POST' });
-  const cleared = extractSetCookie(response);
-
-  throw redirect('/login', cleared ? { headers: { 'Set-Cookie': cleared } } : undefined);
 }
 
 interface NavItem {
@@ -95,7 +86,7 @@ export default function ShellRoute({ loaderData }: { loaderData: { user: Session
             </Badge>
           </div>
 
-          <Form method="post">
+          <Form method="post" action="/logout">
             <Button type="submit" variant="ghost" size="sm">
               Sign out
             </Button>
