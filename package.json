@@ -12,7 +12,7 @@
     "dev": "vite dev",
     "build": "react-router build",
     "preview": "vite preview",
-    "deploy": "react-router build && wrangler d1 migrations apply agpro-db --remote && wrangler deploy",
+    "ship": "react-router build && wrangler d1 migrations apply agpro-db --remote && wrangler deploy",
     "migrate:check": "wrangler d1 migrations list agpro-db --remote",
     "typegen": "react-router typegen",
     "typecheck": "react-router typegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",

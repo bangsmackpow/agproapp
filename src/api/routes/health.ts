@@ -30,7 +30,6 @@ async function health(c: Context<AppEnv>): Promise<Response> {
       app: c.env.APP_NAME,
       environment: c.env.ENVIRONMENT,
       region: c.env.APP_REGION,
-      phase: 'phase-2 (hono gateway)',
       checks: {
         database,
         ...(databaseError ? { databaseError } : {}),
