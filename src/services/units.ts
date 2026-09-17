@@ -32,6 +32,21 @@ export async function assertKnownUnits(
   if (wanted.length === 0) return;
 
   const known = new Set((await listUnits(db)).map((unit) => unit.code));
+
+  // An empty registry means the units seed has not been applied yet, not that
+  // every unit is invalid. Rejecting everything here would turn a deployment
+  // ordering mistake into an outage on every product write.
+  if (known.size === 0) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        message: 'units registry is empty; skipping unit validation until it is seeded',
+        attemptedUnits: wanted,
+      }),
+    );
+    return;
+  }
+
   const unknown = wanted.filter((code) => !known.has(code));
 
   if (unknown.length > 0) {
