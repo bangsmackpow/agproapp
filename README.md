@@ -43,6 +43,11 @@ Attempted access to the checkwriting module by `sales` or `manager` is blocked i
 | **3** | Cross-platform UI: React Router SSR + Tailwind, login, role-aware shell, and screens for CRM, inventory, invoicing, checkwriting and imports | ✅ Complete |
 | **4** | Print output (invoice letter format, positioned three-part cheque) + electronic invoice delivery | ✅ Complete |
 
+**Deferred work.** `docs/SECURITY-TODO.md` holds the security review findings and the
+known functional gaps. Read its "already handled" section before re-auditing — most of
+the obvious surface is covered, and the remaining risk is concentrated in business
+logic on the money paths.
+
 ---
 
 ## Tech stack
