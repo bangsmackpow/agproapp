@@ -17,7 +17,7 @@ import {
   Th,
   statusTone,
 } from '../components/ui';
-import { api, getEnv, requireUser } from '../lib/api.server';
+import { actionFailure, api, getEnv, requireUser } from '../lib/api.server';
 import { can } from '../../src/shared/rbac';
 import { formatCents, formatDate } from '../lib/utils';
 
@@ -102,18 +102,20 @@ export async function action({ request, context }: ActionFunctionArgs) {
     return { error: 'Choose a customer and a pricing tier.' };
   }
 
+  // No description is sent: the server derives it from the selected program or
+  // product, both of which it loads anyway. The form used to carry hidden
+  // programName/productName inputs for this, left permanently empty because nothing
+  // ever populated them, which made every invoice fail body validation.
   const item =
     lineKind === 'program'
       ? {
           lineType: 'program' as const,
           programId: String(form.get('programId') ?? ''),
-          description: String(form.get('programName') ?? 'Application program'),
           acres: Number(form.get('acres') ?? 0),
         }
       : {
           lineType: 'product' as const,
           productId: String(form.get('productId') ?? ''),
-          description: String(form.get('productName') ?? 'Product'),
           quantity: Number(form.get('quantity') ?? 1),
         };
 
@@ -131,7 +133,11 @@ export async function action({ request, context }: ActionFunctionArgs) {
     });
     return { created: true };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : 'Could not create the invoice.' };
+    // actionFailure preserves the field-level detail the API attaches to a body
+    // validation failure. Discarding it — as this used to — leaves a bare "failed
+    // validation" with no indication of which field, which is how the empty
+    // description defect stayed invisible.
+    return actionFailure(error, 'Could not create the invoice.');
   }
 }
 
@@ -155,12 +161,22 @@ export default function InvoicesRoute() {
         actions={canWrite ? undefined : <Badge tone="warning">Read-only</Badge>}
       />
 
-      {result?.error ? (
+      {result && 'error' in result ? (
         <div className="mb-4">
-          <Alert title={result.error} />
+          <Alert title={result.error}>
+            {result.fieldErrors && Object.keys(result.fieldErrors).length > 0 ? (
+              <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                {Object.entries(result.fieldErrors).map(([field, message]) => (
+                  <li key={field}>
+                    <span className="font-medium">{field}</span>: {message}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </Alert>
         </div>
       ) : null}
-      {result?.created ? (
+      {result && 'created' in result ? (
         <div className="mb-4">
           <Alert tone="info" title="Draft invoice created.">
             Open it below to review the compliance gate, then submit.
@@ -256,7 +272,6 @@ export default function InvoicesRoute() {
                     ))}
                   </Select>
                 </Field>
-                <input type="hidden" name="programName" value="" />
                 <div className="mt-3">
                   <Field label="Acres">
                     <Input name="acres" type="number" step="0.1" min="0" placeholder="160" />
@@ -275,7 +290,6 @@ export default function InvoicesRoute() {
                     ))}
                   </Select>
                 </Field>
-                <input type="hidden" name="productName" value="" />
                 <div className="mt-3">
                   <Field label="Quantity" hint="Carry/misc items need a price; the server fills it from the tier when one is configured">
                     <Input name="quantity" type="number" step="1" min="0" defaultValue={1} />

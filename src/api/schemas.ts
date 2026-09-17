@@ -344,7 +344,16 @@ export const invoiceItemInputSchema = z
     programId: id().optional(),
     applicationFeeId: id().optional(),
     applicationMethod: oneOf(APPLICATION_METHODS).optional(),
-    description: z.string().trim().min(1).max(300),
+    /**
+     * Optional, because the server derives it from the program, product or fee
+     * named by the other fields — all of which it loads anyway. A client-supplied
+     * description is redundant state that can drift from the record it describes,
+     * and requiring one only invited callers to send a placeholder.
+     *
+     * `misc` is the exception: those lines reference nothing, so there is nothing
+     * to derive from and the description is required. Enforced by the refine below.
+     */
+    description: optionalText(300),
     quantity: z.number().positive().default(1),
     unit: oneOf(UNITS).optional(),
     acres: z.number().positive().optional(),
@@ -367,7 +376,14 @@ export const invoiceItemInputSchema = z
     (line) =>
       line.lineType === 'program' ? Boolean(line.acres ?? line.quantity) : true,
     { message: 'acres is required for program lines', path: ['acres'] },
-  );
+  )
+  // A misc line points at no program, product or fee, so unlike every other line
+  // type it has nothing to derive a description from. Boolean('') is false, so an
+  // empty string counts as absent rather than as a supplied description.
+  .refine((line) => (line.lineType === 'misc' ? Boolean(line.description) : true), {
+    message: 'description is required for misc lines',
+    path: ['description'],
+  });
 
 export const invoiceCreateSchema = z.object({
   customerId: id(),

@@ -165,7 +165,10 @@ async function resolveLine(
         productId: null,
         applicationFeeId: null,
         applicationMethod: line.applicationMethod ?? program.defaultApplicationMethod,
-        description: line.description,
+        // Derived rather than required from the caller: the program is loaded right
+        // here, so its name is the authoritative description and the client cannot
+        // get it wrong or send a placeholder.
+        description: line.description?.trim() || program.name,
         quantity: acres,
         unit: 'acre',
         acres,
@@ -204,7 +207,7 @@ async function resolveLine(
         programId: null,
         productId: null,
         applicationMethod: fee.method,
-        description: line.description,
+        description: line.description?.trim() || fee.label,
         quantity: acres,
         unit: 'acre',
         acres,
@@ -228,12 +231,22 @@ async function resolveLine(
     if (!product) throw notFound(`Product ${line.productId} not found`);
   }
 
+  // Derived from the product when there is one. A misc line has no product, so for
+  // those the description must come from the caller and the schema already required
+  // it — this is the belt to that braces, since the service can be called directly
+  // and an empty description would otherwise reach the database. Resolved before the
+  // price check so the refusal below can name the line.
+  const description = line.description?.trim() || product?.name;
+  if (!description) {
+    throw unprocessable('A line with no product requires a description');
+  }
+
   const unitPriceCents =
     line.unitPriceCents ?? (product ? productFallbackPrice(product, tier.key) : undefined);
 
   if (unitPriceCents === undefined) {
     throw unprocessable(
-      `Line "${line.description}" has no price for tier "${tier.label}" and none was supplied`,
+      `Line "${description}" has no price for tier "${tier.label}" and none was supplied`,
     );
   }
 
@@ -247,7 +260,7 @@ async function resolveLine(
       programId: null,
       applicationFeeId: null,
       applicationMethod: line.applicationMethod ?? null,
-      description: line.description,
+      description,
       quantity: line.quantity,
       unit: line.unit ?? product?.unit ?? null,
       acres: line.acres ?? null,
