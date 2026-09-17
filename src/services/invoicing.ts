@@ -544,6 +544,20 @@ export async function recordInvoicePayment(
   if (!invoice) throw notFound(`Invoice ${invoiceId} not found`);
   if (invoice.status === 'canceled') throw conflict('Cannot pay a canceled invoice');
 
+  /*
+   * A payment must not be a back door around sending.
+   *
+   * Sending is where the Iowa seed-compliance gate is enforced and where stock is
+   * consumed, and both hang off the `draft -> sent` transition. Letting a draft be
+   * marked paid here would skip them: the invoice would report as settled without
+   * its BOL/CMR and Order Number ever being verified, and without drawing down the
+   * inventory it shipped. The UI only offers this button on a sent invoice, but the
+   * API is the authority, so the guard has to live here.
+   */
+  if (invoice.status !== 'sent' && invoice.status !== 'paid') {
+    throw conflict(`Cannot record a payment on a ${invoice.status} invoice. Send it first.`);
+  }
+
   const amountPaidCents = invoice.amountPaidCents + amountCents;
   const balanceCents = Math.max(0, invoice.totalCents - amountPaidCents);
   const now = new Date();

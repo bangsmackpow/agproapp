@@ -7,14 +7,26 @@ import { extractSetCookie, getEnv, getSessionUser, rawApi } from '../lib/api.ser
 
 export const meta = () => [{ title: 'Sign in · AG Pro Solutions' }];
 
+/**
+ * Resolves the post-login destination, refusing anything off-origin.
+ *
+ * `startsWith('/')` is not sufficient on its own: `//evil.com` starts with a slash
+ * but browsers read it as protocol-relative, so it would send someone straight to
+ * an attacker's site immediately after they authenticated — a credible phishing
+ * pivot. Requiring a single leading slash (not two) keeps the target a real path
+ * on this origin.
+ */
+function safeNext(next: string | null): string {
+  return next && /^\/(?!\/)/.test(next) ? next : '/';
+}
+
 /** Anyone already signed in has no business on the login screen. */
 export async function loader({ request, context }: LoaderFunctionArgs) {
   const env = getEnv(context);
   const user = await getSessionUser(env, request);
 
   if (user) {
-    const next = new URL(request.url).searchParams.get('next');
-    throw redirect(next && next.startsWith('/') ? next : '/');
+    throw redirect(safeNext(new URL(request.url).searchParams.get('next')));
   }
 
   return null;
@@ -49,10 +61,9 @@ export async function action({ request, context }: ActionFunctionArgs) {
   }
 
   const next = new URL(request.url).searchParams.get('next');
-  const destination = next && next.startsWith('/') ? next : '/';
 
   // Re-emit the API's own Set-Cookie on the redirect so the browser stores it.
-  throw redirect(destination, { headers: { 'Set-Cookie': setCookie } });
+  throw redirect(safeNext(next), { headers: { 'Set-Cookie': setCookie } });
 }
 
 export default function LoginRoute() {

@@ -14,7 +14,7 @@ import {
   users,
 } from '../db/schema';
 import { PRICE_TIER_KEYS } from '../shared/enums';
-import { createInvoiceDraft, getInvoiceWithItems } from './invoicing';
+import { createInvoiceDraft, getInvoiceWithItems, recordInvoicePayment } from './invoicing';
 
 /**
  * Line descriptions.
@@ -231,5 +231,44 @@ describe('invoice line description — derivation', () => {
         ctx.actor.id,
       ),
     ).rejects.toThrow(/requires a description/);
+  });
+});
+
+describe('recording a payment', () => {
+  let ctx: Awaited<ReturnType<typeof seed>>;
+
+  beforeEach(async () => {
+    ctx = await seed();
+  });
+
+  const draftInvoice = (ctx: Awaited<ReturnType<typeof seed>>) =>
+    createInvoiceDraft(
+      ctx.db,
+      {
+        customerId: ctx.customer.id,
+        pricingTierKey: TIER_KEY,
+        issueDate: ISSUE_DATE,
+        items: [{ lineType: 'program', programId: ctx.program.id, acres: 10, quantity: 10 }],
+      },
+      ctx.actor.id,
+    );
+
+  it('refuses to settle a draft, which would skip the compliance gate and stock', async () => {
+    // A real bypass, not a hypothetical: sending is where the Iowa seed-compliance
+    // gate is enforced and where stock is consumed, and both hang off the
+    // `draft -> sent` transition. Paying a draft directly marked it `paid`, so an
+    // invoice that was never sent reported as settled with its BOL/CMR numbers
+    // never verified and its inventory never drawn down.
+    const draft = await draftInvoice(ctx);
+    expect(draft.status).toBe('draft');
+
+    await expect(recordInvoicePayment(ctx.db, draft.id, draft.totalCents)).rejects.toThrow(
+      /Send it first/,
+    );
+
+    const { invoice } = await getInvoiceWithItems(ctx.db, draft.id);
+    expect(invoice.status).toBe('draft');
+    expect(invoice.amountPaidCents).toBe(0);
+    expect(invoice.balanceCents).toBe(draft.totalCents);
   });
 });
