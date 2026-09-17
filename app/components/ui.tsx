@@ -17,7 +17,7 @@ import { cn } from '../lib/utils';
 /* ── Button ────────────────────────────────────────────────────────────────── */
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
@@ -26,15 +26,18 @@ const buttonVariants = cva(
         ghost: 'text-ink hover:bg-muted',
         danger: 'bg-danger text-white hover:opacity-90',
       },
+      // One step tighter all round. 32px is the default control height, which is
+      // what makes a dense toolbar read as a toolbar rather than a row of buttons.
       size: {
-        sm: 'h-8 px-3',
-        md: 'h-10 px-4',
-        lg: 'h-12 px-6',
+        sm: 'h-7 px-2.5',
+        md: 'h-8 px-3',
+        lg: 'h-10 px-4',
       },
     },
     defaultVariants: { variant: 'primary', size: 'md' },
   },
 );
+
 
 export interface ButtonProps
   extends ComponentPropsWithRef<'button'>,
@@ -59,10 +62,10 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-ink">{label}</span>
+      <span className="mb-0.5 block text-xs font-medium text-ink">{label}</span>
       {children}
-      {hint && !error ? <span className="mt-1 block text-xs text-ink-muted">{hint}</span> : null}
-      {error ? <span className="mt-1 block text-xs text-danger">{error}</span> : null}
+      {hint && !error ? <span className="mt-0.5 block text-xs text-ink-muted">{hint}</span> : null}
+      {error ? <span className="mt-0.5 block text-xs text-danger">{error}</span> : null}
     </label>
   );
 }
@@ -71,7 +74,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cn(
-        'h-10 w-full rounded-md border border-border bg-white px-3 text-sm text-ink placeholder:text-ink-muted focus:border-brand-500 focus:outline-none',
+        'h-8 w-full rounded-md border border-border bg-white px-2 text-sm text-ink placeholder:text-ink-muted focus:border-brand-600 focus:outline-none',
         className,
       )}
       {...props}
@@ -83,7 +86,7 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-10 w-full rounded-md border border-border bg-white px-3 text-sm text-ink focus:border-brand-500 focus:outline-none',
+        'h-8 w-full rounded-md border border-border bg-white px-2 text-sm text-ink focus:border-brand-600 focus:outline-none',
         className,
       )}
       {...props}
@@ -91,13 +94,16 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   );
 }
 
+
 /* ── Surfaces ──────────────────────────────────────────────────────────────── */
 
+/**
+ * A bordered region. No shadow and no lift: on a white page the border is the
+ * whole separation, which keeps stacked panels from reading as floating cards.
+ */
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <section className={cn('rounded-lg border border-border bg-surface shadow-sm', className)}>
-      {children}
-    </section>
+    <section className={cn('rounded-md border border-border bg-surface', className)}>{children}</section>
   );
 }
 
@@ -111,26 +117,36 @@ export function CardHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
-      <div>
-        <h2 className="text-sm font-semibold text-ink">{title}</h2>
-        {description ? <p className="mt-0.5 text-xs text-ink-muted">{description}</p> : null}
+    <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/60 px-3 py-1.5">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h2 className="text-xs font-semibold tracking-wide text-ink uppercase">{title}</h2>
+        {description ? <p className="text-xs text-ink-muted">{description}</p> : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex items-center gap-1.5">{actions}</div> : null}
     </header>
   );
 }
 
+
 /* ── Badge ─────────────────────────────────────────────────────────────────── */
 
-const badgeVariants = cva('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium', {
+export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+
+/**
+ * A categorical label — a division, a regulatory flag, and similar.
+ *
+ * Flat and muted on purpose. Colour is reserved for status, so a catalogue full
+ * of products does not turn into a wall of tinted pills that all look equally
+ * urgent, and the one that matters stands out because it is the only one coloured.
+ */
+const badgeVariants = cva('inline-flex items-center rounded-sm border px-1.5 py-0.5 text-[11px] font-medium', {
   variants: {
     tone: {
-      neutral: 'bg-muted text-ink-muted',
-      info: 'bg-brand-100 text-brand-900',
-      success: 'bg-green-100 text-green-800',
-      warning: 'bg-amber-100 text-amber-800',
-      danger: 'bg-red-100 text-red-800',
+      neutral: 'border-border text-ink-muted',
+      info: 'border-brand-200 text-brand-900',
+      success: 'border-green-200 text-green-800',
+      warning: 'border-amber-200 text-amber-800',
+      danger: 'border-red-200 text-red-800',
     },
   },
   defaultVariants: { tone: 'neutral' },
@@ -145,8 +161,35 @@ export function Badge({ tone, className, children }: BadgeProps) {
   return <span className={cn(badgeVariants({ tone }), className)}>{children}</span>;
 }
 
-/** Maps a domain status onto a badge tone, in one place. */
-export function statusTone(status: string): 'neutral' | 'info' | 'success' | 'warning' | 'danger' {
+const statusDotTones: Record<BadgeTone, string> = {
+  neutral: 'bg-ink-muted',
+  info: 'bg-brand-600',
+  success: 'bg-success',
+  warning: 'bg-warning',
+  danger: 'bg-danger',
+};
+
+/**
+ * Status as a small coloured dot followed by the word.
+ *
+ * The dot carries the signal, so the text can stay in the ordinary ink colour and
+ * every status reads at the same weight. Tinting the whole label instead makes a
+ * routine `draft` look as loud as a `voided`, which is the wrong emphasis.
+ */
+export function Status({ tone = 'neutral', children }: { tone?: BadgeTone; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm text-ink">
+      <span
+        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDotTones[tone])}
+        aria-hidden="true"
+      />
+      {children}
+    </span>
+  );
+}
+
+/** Maps a domain status onto a tone, in one place. */
+export function statusTone(status: string): BadgeTone {
   switch (status) {
     case 'paid':
     case 'cleared':
@@ -170,6 +213,7 @@ export function statusTone(status: string): 'neutral' | 'info' | 'success' | 'wa
   }
 }
 
+
 /* ── Table ─────────────────────────────────────────────────────────────────── */
 
 export function Table({ children, className }: { children: ReactNode; className?: string }) {
@@ -184,7 +228,7 @@ export function Th({ children, className }: { children?: ReactNode; className?: 
   return (
     <th
       className={cn(
-        'border-b border-border px-3 py-2 text-left text-xs font-semibold tracking-wide text-ink-muted uppercase',
+        'border-b border-border px-2.5 py-1.5 text-left text-[11px] font-semibold tracking-wide text-ink-muted uppercase',
         className,
       )}
     >
@@ -194,15 +238,18 @@ export function Th({ children, className }: { children?: ReactNode; className?: 
 }
 
 export function Td({ children, className }: { children?: ReactNode; className?: string }) {
-  return <td className={cn('border-b border-border px-3 py-2 text-ink', className)}>{children}</td>;
+  return (
+    <td className={cn('border-b border-border px-2.5 py-1 text-ink', className)}>{children}</td>
+  );
 }
+
 
 /* ── Feedback ──────────────────────────────────────────────────────────────── */
 
 export function EmptyRow({ colSpan, message }: { colSpan: number; message: string }) {
   return (
     <tr>
-      <td colSpan={colSpan} className="px-3 py-8 text-center text-sm text-ink-muted">
+      <td colSpan={colSpan} className="px-2.5 py-6 text-center text-sm text-ink-muted">
         {message}
       </td>
     </tr>
@@ -218,19 +265,23 @@ export function Alert({
   title: string;
   children?: ReactNode;
 }) {
+  // A left rule and a faint tint rather than a filled bordered panel. Only the
+  // left border is coloured, so there is no `border-*` versus `border-l-*` colour
+  // conflict to depend on stylesheet order for.
   const tones = {
-    danger: 'border-red-200 bg-red-50 text-red-900',
-    warning: 'border-amber-200 bg-amber-50 text-amber-900',
-    info: 'border-brand-200 bg-brand-50 text-brand-900',
+    danger: 'border-l-danger bg-red-50/70 text-red-900',
+    warning: 'border-l-warning bg-amber-50/70 text-amber-900',
+    info: 'border-l-brand-600 bg-brand-50/70 text-brand-900',
   } as const;
 
   return (
-    <div className={cn('rounded-md border px-4 py-3 text-sm', tones[tone])} role="alert">
+    <div className={cn('rounded-sm border-l-2 py-1.5 pr-2.5 pl-2 text-sm', tones[tone])} role="alert">
       <p className="font-medium">{title}</p>
       {children ? <div className="mt-1">{children}</div> : null}
     </div>
   );
 }
+
 
 export function PageHeader({
   title,
@@ -241,26 +292,29 @@ export function PageHeader({
   description?: string;
   actions?: ReactNode;
 }) {
+  // A rule under the header rather than a box around the page. It gives the
+  // screen one clear top edge and lets everything below sit flat on white.
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="text-xl font-semibold text-ink">{title}</h1>
-        {description ? <p className="mt-1 text-sm text-ink-muted">{description}</p> : null}
+    <div className="mb-3 flex flex-wrap items-end justify-between gap-2 border-b border-border pb-2">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h1 className="text-lg font-semibold text-ink">{title}</h1>
+        {description ? <p className="text-xs text-ink-muted">{description}</p> : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex items-center gap-1.5">{actions}</div> : null}
     </div>
   );
 }
 
 export function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <Card className="p-4">
-      <p className="text-xs font-medium tracking-wide text-ink-muted uppercase">{label}</p>
-      <p className="tabular mt-1 text-2xl font-semibold text-ink">{value}</p>
-      {hint ? <p className="mt-1 text-xs text-ink-muted">{hint}</p> : null}
-    </Card>
+    <div className="rounded-md border border-border px-3 py-2">
+      <p className="text-[11px] font-medium tracking-wide text-ink-muted uppercase">{label}</p>
+      <p className="tabular mt-0.5 text-lg font-semibold text-ink">{value}</p>
+      {hint ? <p className="text-xs text-ink-muted">{hint}</p> : null}
+    </div>
   );
 }
+
 
 /* ── Pagination and sorting ────────────────────────────────────────────────── */
 
@@ -306,12 +360,12 @@ export function SortLink({
   return (
     <th
       className={cn(
-        'border-b border-border px-3 py-2 text-left text-xs font-semibold tracking-wide text-ink-muted uppercase',
+        'border-b border-border px-2.5 py-1.5 text-left text-[11px] font-semibold tracking-wide text-ink-muted uppercase',
         className,
       )}
     >
       <a
-        className="inline-flex items-center gap-1 hover:text-ink"
+        className="inline-flex items-center gap-0.5 hover:text-ink"
         href={withParam(basePath, current, { sort: field, direction: nextDirection, offset: 0 })}
       >
         {children}
@@ -320,6 +374,7 @@ export function SortLink({
     </th>
   );
 }
+
 
 /**
  * Paging control. Renders nothing when everything fits on one page, so short
@@ -344,14 +399,14 @@ export function Pagination({
   const page = Math.floor(offset / limit) + 1;
 
   return (
-    <nav className="flex flex-wrap items-center justify-between gap-2 border-t border-border p-3 text-sm">
+    <nav className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-2.5 py-1.5 text-xs">
       <span className="text-ink-muted">
         Page {page} of {pages} · {total} total
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         {offset > 0 ? (
           <a
-            className="rounded-md bg-white px-3 py-1.5 text-ink ring-1 ring-border"
+            className="rounded-sm border border-border px-2 py-0.5 text-ink hover:bg-muted"
             href={withParam(basePath, current, { offset: Math.max(0, offset - limit) })}
           >
             Newer
@@ -359,7 +414,7 @@ export function Pagination({
         ) : null}
         {offset + limit < total ? (
           <a
-            className="rounded-md bg-white px-3 py-1.5 text-ink ring-1 ring-border"
+            className="rounded-sm border border-border px-2 py-0.5 text-ink hover:bg-muted"
             href={withParam(basePath, current, { offset: offset + limit })}
           >
             Older
@@ -369,3 +424,4 @@ export function Pagination({
     </nav>
   );
 }
+

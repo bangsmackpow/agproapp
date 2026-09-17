@@ -35,6 +35,20 @@
   --color-danger: oklch(0.55 0.19 27);
   --color-success: oklch(0.55 0.14 150);
   --color-warning: oklch(0.7 0.15 75);
+
+  /*
+   * Near-square corners, decided once here instead of by hunting `rounded-*`
+   * classes across every component. Collapsing the whole scale to a single value
+   * is deliberate: there are no steps left to drift back toward rounded, and the
+   * interface should read as dense and utilitarian rather than friendly.
+   * `rounded-full` is untouched — it is only used for status dots.
+   */
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --radius-xl: 2px;
+  --radius-2xl: 2px;
+  --radius-3xl: 2px;
 }
 
 html,
@@ -43,7 +57,12 @@ body {
 }
 
 body {
-  background-color: var(--color-muted);
+  /*
+   * White, not the gray canvas it used to be. Panels are separated by 1px rules
+   * rather than by floating on a tinted background, which is both denser and
+   * quieter. `muted` survives as the hover and header-band tone.
+   */
+  background-color: var(--color-surface);
   color: var(--color-ink);
   font-family:
     ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;

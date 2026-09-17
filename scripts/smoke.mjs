@@ -40,7 +40,19 @@ const CUSTOMER_NAME = 'Smoke Invoice Customer';
 const PRODUCT_NAME = 'Smoke Audit Product';
 
 /** Screens the shell renders; each must load without throwing. */
-const SCREENS = ['/', '/customers', '/inventory', '/invoices', '/checks', '/imports', '/audit'];
+const SCREENS = [
+  '/',
+  '/customers',
+  '/inventory',
+  // The product create screen. Listed explicitly because it is a literal route
+  // declared ahead of `inventory/:id`, and a mis-ordered table would send it to
+  // the record page instead — which loads fine and would hide the mistake.
+  '/inventory/new',
+  '/invoices',
+  '/checks',
+  '/imports',
+  '/audit',
+];
 
 const results = [];
 
