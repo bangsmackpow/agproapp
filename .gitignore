@@ -11,6 +11,9 @@ docs/*.xls
 docs/csv/
 docs/*.csv
 
+# Audit archives contain actor IPs and change history.
+docs/archive/
+
 # ── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
 .pnpm-store/

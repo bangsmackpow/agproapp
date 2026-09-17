@@ -22,6 +22,7 @@
     "types": "wrangler types",
     "user:create": "node scripts/create-user.mjs",
     "import:prices": "node scripts/import-prices.mjs",
+    "audit:archive": "node scripts/audit-archive.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply agpro-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply agpro-db --remote",
