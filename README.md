@@ -335,13 +335,27 @@ Loaders and actions call the Hono app **in the same isolate** (`app/lib/api.serv
 
 ## Deployment
 
+There are two paths, and the difference is deliberate.
+
 ```bash
-pnpm ship                 # build -> apply remote migrations -> deploy the Worker
+pnpm ship                 # build -> apply remote migrations -> deploy
 ```
 
-> The script is called **`ship`**, not `deploy`, because `deploy` is a reserved pnpm command (it deploys a workspace package). A script named `deploy` is unreachable — `pnpm deploy` never reaches it, and you would have to remember to type `pnpm run deploy`. Shipping is therefore build, migrate and deploy in one step, in that order, so the schema can never lag the code.
+`ship` is the **local** path: full credentials, so it can touch D1. Use it whenever a migration is involved, because it applies migrations *before* the code that needs them — the schema can never lag the code.
 
-For dashboard-driven deploys, connect this repository to a Worker, leave the root directory empty (`wrangler.toml` is at the repo root), and set the deploy command to `pnpm ship`.
+```bash
+pnpm deploy               # build -> deploy only
+```
+
+`deploy` is the **CI** path, and it is what Cloudflare's Workers Builds runs (`pnpm run deploy`, the convention its framework guides expect). It deliberately omits migrations, because the API token Workers Builds generates is scoped:
+
+> **Account:** Account Settings (read), Workers Scripts (edit), Workers KV Storage (edit), Workers R2 Storage (edit)
+
+There is **no D1 permission** in that list, so `wrangler d1 migrations apply --remote` fails inside a build with an authentication error, while `wrangler deploy` succeeds. A deploy script that included migrations would break every CI build.
+
+**The consequence, and the discipline it requires:** CI cannot apply migrations, so it also cannot verify they are applied. If you push a schema change and let CI deploy, the new code can reach a database that has not been migrated. Run `pnpm db:migrate:remote` (or `pnpm ship`) from a machine with full credentials before pushing anything that depends on a migration. This is the one ordering the build system cannot enforce for you.
+
+To connect the repository: leave the root directory empty (`wrangler.toml` is at the repo root) and set the deploy command to `pnpm run deploy`.
 
 Migrations run inside `ship`, but **seeds do not**. Reference data and the units registry are applied separately and deliberately:
 
