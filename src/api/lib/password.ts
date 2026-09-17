@@ -75,9 +75,29 @@ async function derive(password: string, salt: Uint8Array, iterations: number): P
   return new Uint8Array(bits);
 }
 
-/** Constant-time comparison; never short-circuits on the first differing byte. */
+/**
+ * Constant-time comparison.
+ *
+ * Uses Cloudflare's non-standard `crypto.subtle.timingSafeEqual` rather than
+ * hand-rolling the loop. It is a documented Workers extension, and a
+ * security-critical primitive is better taken from the platform than
+ * reimplemented — a hand-written comparison is exactly where a timing leak hides.
+ *
+ * Lengths are checked first because the platform helper is not specified for
+ * inputs of differing length, and unequal lengths must not be compared at all.
+ */
 export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
+
+  const subtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual?(left: ArrayBuffer | ArrayBufferView, right: ArrayBuffer | ArrayBufferView): boolean;
+  };
+
+  if (typeof subtle.timingSafeEqual === 'function') {
+    return subtle.timingSafeEqual(toArrayBuffer(a), toArrayBuffer(b));
+  }
+
+  // Fallback for any runtime that predates the extension. Still constant-time.
   let difference = 0;
   for (let i = 0; i < a.length; i += 1) {
     difference |= (a[i] as number) ^ (b[i] as number);
