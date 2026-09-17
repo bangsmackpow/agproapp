@@ -4,11 +4,14 @@
  *
  * The unit suite runs against the API entry point (`src/worker.ts`) inside
  * workerd. It cannot see the React Router SSR layer, and that gap has already
- * produced two production bugs: a session cookie that was never relayed, and a
- * sign-out form whose action lived on a pathless layout.
+ * produced three production bugs: a session cookie that was never relayed, a
+ * sign-out form whose action lived on a pathless layout, and invoice creation
+ * failing validation because the form sent an empty description the schema
+ * rejected. All three lived in the action/form layer the unit suite cannot reach.
  *
  * So this boots the real build, signs in as a throwaway admin, walks the auth
- * journey and loads every screen, then deletes the account it made.
+ * journey, loads every screen, submits the invoice form the way a browser does,
+ * then deletes everything it made.
  *
  *   pnpm smoke
  */
@@ -25,6 +28,16 @@ const PORT = Number(process.env.SMOKE_PORT ?? 4319);
 const BASE = `http://localhost:${PORT}`;
 const EMAIL = `smoke-${Date.now()}@agpro.local`;
 const PASSWORD = generatePassword();
+
+/**
+ * Invoicing needs a customer and a price tier. The tier normally arrives via
+ * seed/0001_reference.sql, but the smoke database is only migrated, not seeded,
+ * so the run ensures one exists and removes everything it created afterwards.
+ */
+const PRICE_TIER_KEY = 'cash_app';
+const CUSTOMER_PREFIX = 'SMOKE-';
+const CUSTOMER_NAME = 'Smoke Invoice Customer';
+const PRODUCT_NAME = 'Smoke Audit Product';
 
 /** Screens the shell renders; each must load without throwing. */
 const SCREENS = ['/', '/customers', '/inventory', '/invoices', '/checks', '/imports', '/audit'];
@@ -76,15 +89,40 @@ function createSmokeUser() {
   executeSql(sql);
 }
 
+/**
+ * Invoicing needs at least one price tier to exist, and tiers come from
+ * seed/0001_reference.sql rather than from a migration. `INSERT OR IGNORE` keys
+ * off the unique index on `key`, so this is safe whether or not the database was
+ * ever seeded, and it never disturbs a real tier's pricing.
+ */
+function ensureSmokeReference() {
+  executeSql(
+    [
+      'INSERT OR IGNORE INTO price_tiers',
+      '(id, key, label, multiplier, requires_application, requires_pesticide_license, sort_order, is_active, created_at, updated_at)',
+      `VALUES (${sqlText(randomUUID())}, ${sqlText(PRICE_TIER_KEY)}, 'Smoke Cash Application', 1.2, 0, 0, 0, 1, unixepoch() * 1000, unixepoch() * 1000);`,
+    ].join(' '),
+  );
+}
+
 function removeSmokeUser() {
   // Order matters: inventory_movements references products with ON DELETE
   // restrict, so the ledger has to go before the product it describes. That
   // constraint is the reason a product with movements cannot be deleted at all
-  // from the application, which is deliberate.
+  // from the application, which is deliberate. Invoices are the same story —
+  // their lines and delivery records point at them.
   const smokeProducts = `(SELECT id FROM products WHERE sku LIKE 'SMOKE-%')`;
+  const smokeCustomers = `(SELECT id FROM customers WHERE account_number LIKE '${CUSTOMER_PREFIX}%')`;
+  const smokeInvoices = `(SELECT id FROM invoices WHERE customer_id IN ${smokeCustomers})`;
 
   executeSql(
     [
+      `DELETE FROM invoice_deliveries WHERE invoice_id IN ${smokeInvoices};`,
+      `DELETE FROM invoice_items WHERE invoice_id IN ${smokeInvoices};`,
+      `DELETE FROM audit_logs WHERE entity_type = 'invoice' AND entity_id IN ${smokeInvoices};`,
+      `DELETE FROM invoices WHERE customer_id IN ${smokeCustomers};`,
+      `DELETE FROM audit_logs WHERE entity_type = 'customer' AND entity_id IN ${smokeCustomers};`,
+      `DELETE FROM customers WHERE account_number LIKE '${CUSTOMER_PREFIX}%';`,
       `DELETE FROM inventory_movements WHERE product_id IN ${smokeProducts};`,
       `DELETE FROM inventory_lots WHERE product_id IN ${smokeProducts};`,
       `DELETE FROM product_costs WHERE product_id IN ${smokeProducts};`,
@@ -127,6 +165,7 @@ async function run() {
 
   migrateLocal();
   createSmokeUser();
+  ensureSmokeReference();
 
   const server = startPreview();
 
@@ -192,9 +231,17 @@ async function run() {
     // A diff is only worth having if it captures the previous value, so this
     // changes a product's unit and reads the change back out of the trail.
     const sku = `SMOKE-${Date.now()}`;
+    // Priced for the tier the invoice check below sells on, so the line is
+    // sellable from the form — the form sends no price of its own.
     const { body: created } = await jsonRequest('/api/products', cookie, {
       method: 'POST',
-      body: JSON.stringify({ sku, name: 'Smoke Audit Product', type: 'chemical', unit: 'gal' }),
+      body: JSON.stringify({
+        sku,
+        name: PRODUCT_NAME,
+        type: 'chemical',
+        unit: 'gal',
+        cashAppPriceCents: 500,
+      }),
     });
     check('product can be created', Boolean(created?.data?.id), JSON.stringify(created));
 
@@ -248,6 +295,60 @@ async function run() {
           afterAdjust?.data?.ledger?.some((row) => row.movementType === 'adjustment'),
         `pool ${JSON.stringify(afterAdjust?.data?.quantityOnHand)}, ledger ${afterAdjust?.data?.ledger?.length}`,
       );
+
+      /* ── Invoice creation through the form ───────────────────────────────
+       * Submits the payload the browser actually sends, urlencoded to the route
+       * action, because that is the layer that broke: the action assembled an
+       * empty description from a hidden input, the schema required one character,
+       * and every invoice failed. The unit suite cannot reach this layer, so this
+       * is the check that would have caught it.
+       */
+      const { body: customer } = await jsonRequest('/api/customers', cookie, {
+        method: 'POST',
+        body: JSON.stringify({
+          accountNumber: `${CUSTOMER_PREFIX}${Date.now()}`,
+          name: CUSTOMER_NAME,
+        }),
+      });
+
+      if (customer?.data?.id) {
+        const submitted = await fetch(`${BASE}/invoices.data`, {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            customerId: customer.data.id,
+            pricingTierKey: PRICE_TIER_KEY,
+            lineKind: 'product',
+            productId,
+            quantity: '2',
+          }),
+          redirect: 'manual',
+        });
+        const submittedBody = await submitted.text();
+
+        check(
+          'an invoice can be created from the form, the way the browser submits it',
+          submitted.status < 400 && !/failed validation/i.test(submittedBody),
+          `${submitted.status} ${submittedBody.slice(0, 300)}`,
+        );
+
+        // The form no longer sends a description; the server derives it. A blank
+        // one would mean the regression returned by another route.
+        const { body: invoices } = await jsonRequest('/api/invoices?limit=50', cookie);
+        const draft = (invoices?.data ?? []).find((row) => row.customerName === CUSTOMER_NAME);
+        const { body: detail } = draft
+          ? await jsonRequest(`/api/invoices/${draft.id}`, cookie)
+          : { body: null };
+
+        // `items` is a sibling of `data` on this endpoint, not nested under it.
+        check(
+          'the draft line is described by the product, not left blank',
+          detail?.items?.[0]?.description === PRODUCT_NAME,
+          `got ${JSON.stringify(detail?.items?.[0]?.description)}`,
+        );
+      } else {
+        check('an invoice can be created from the form, the way the browser submits it', false, 'no customer created');
+      }
     }
 
     /* ── Sign out ────────────────────────────────────────────────────────── */    const signedOut = await fetch(`${BASE}/logout`, {
