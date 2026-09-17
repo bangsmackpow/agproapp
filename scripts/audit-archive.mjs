@@ -23,7 +23,7 @@
 import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 
-import { executeSql, PROJECT_ROOT, queryRows } from './lib/d1.mjs';
+import { createD1, PROJECT_ROOT } from './lib/d1.mjs';
 
 const args = process.argv.slice(2);
 const flagValue = (name, fallback) => {
@@ -33,9 +33,11 @@ const flagValue = (name, fallback) => {
 
 const months = Number.parseInt(flagValue('months', '12'), 10);
 const confirm = args.includes('--confirm');
-const local = !args.includes('--remote');
 const outArg = flagValue('out', `docs/archive/audit-${new Date().toISOString().slice(0, 10)}.ndjson`);
 const outPath = isAbsolute(outArg) ? outArg : join(PROJECT_ROOT, outArg);
+
+/** One bound target for the count, the export and the delete. */
+const db = createD1({ local: !args.includes('--remote') });
 
 if (!Number.isFinite(months) || months < 1 || months > 120) {
   console.error('--months must be between 1 and 120');
@@ -47,11 +49,11 @@ cutoff.setMonth(cutoff.getMonth() - months);
 
 const cutoffIso = cutoff.toISOString();
 console.log(`\nAudit archive${confirm ? '' : ' (dry run)'}`);
-console.log(`Target   : ${local ? 'local D1' : 'remote D1'}`);
+console.log(`Target   : ${db.where} D1`);
 console.log(`Cutoff   : rows created before ${cutoffIso} (${months} months)`);
 console.log(`Export   : ${outPath}`);
 
-const counted = queryRows(
+const counted = db.query(
   `SELECT COUNT(*) AS total, MIN(created_at) AS oldest, MAX(created_at) AS newest FROM audit_logs WHERE created_at < ${cutoff.getTime()};`,
 );
 const summary = counted[0] ?? {};
@@ -74,7 +76,7 @@ if (!confirm) {
 
 /* ── Export first, verify, then delete ─────────────────────────────────────── */
 
-const rows = queryRows(
+const rows = db.query(
   [
     'SELECT id, actor_user_id, action, entity_type, entity_id, metadata, ip_address, created_at',
     'FROM audit_logs',
@@ -107,7 +109,7 @@ if (written < ndjsonBytes) {
 
 console.log(`Wrote    : ${written} bytes to ${outPath}`);
 
-executeSql(`DELETE FROM audit_logs WHERE created_at < ${cutoff.getTime()};`, { local });
+db.execute(`DELETE FROM audit_logs WHERE created_at < ${cutoff.getTime()};`);
 
-const remaining = queryRows('SELECT COUNT(*) AS total FROM audit_logs;');
+const remaining = db.query('SELECT COUNT(*) AS total FROM audit_logs;');
 console.log(`Deleted  : ${total} rows (${remaining[0]?.total ?? 0} remain)\n`);

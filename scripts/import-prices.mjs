@@ -19,7 +19,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { executeSql, PROJECT_ROOT, queryRows } from './lib/d1.mjs';
+import { createD1, PROJECT_ROOT } from './lib/d1.mjs';
 import { sqlText } from './lib/password.mjs';
 import { matchProduct, parseCsv, parseProgramSheet, skuFor } from './lib/price-sheet.mjs';
 
@@ -29,7 +29,13 @@ const SHEET = join(PROJECT_ROOT, 'docs', 'csv', 'prices2027.csv');
 
 const flags = new Set(process.argv.slice(2).filter((arg) => arg.startsWith('--')));
 const dryRun = flags.has('--dry-run');
-const local = !flags.has('--remote');
+
+/**
+ * One bound client for every read and write. Reads previously defaulted to local
+ * while writes went to remote, which matched product names against the wrong
+ * catalogue.
+ */
+const db = createD1({ local: !flags.has('--remote') });
 
 function fail(message) {
   console.error(`\n${message}\n`);
@@ -60,7 +66,10 @@ console.log(
   `Parsed     : ${parsed.programs.length} programs, ${ingredientRows} ingredient rows, ` +
     `${parsed.annotations.length} stray cell notes`,
 );
-console.log(`Target     : ${local ? 'local D1' : 'remote D1'}${dryRun ? ' (dry run)' : ''}`);
+console.log(`Target     : ${db.where} D1${dryRun ? ' (dry run)' : ''}`);
+if (db.where === 'remote') {
+  console.log('             ^ PRODUCTION: both reads and writes go to the deployed database');
+}
 
 if (parsed.warnings.length > 0) {
   console.log('\nWarnings');
@@ -89,7 +98,7 @@ if (parsed.annotations.length > 0) {
 
 /* ── Reconcile products ────────────────────────────────────────────────────── */
 
-const tiers = queryRows('SELECT id, key FROM price_tiers WHERE is_active = 1;');
+const tiers = db.query('SELECT id, key FROM price_tiers WHERE is_active = 1;');
 const tierIdByKey = new Map(tiers.map((tier) => [tier.key, tier.id]));
 
 const TIER_KEY_BY_COLUMN = {
@@ -109,7 +118,7 @@ if (missingTiers.length > 0) {
   );
 }
 
-const products = queryRows('SELECT id, sku, name FROM products;');
+const products = db.query('SELECT id, sku, name FROM products;');
 /** Ids that existed before this run, to tell catalogue matches from in-run dedupe. */
 const preexistingIds = new Set(products.map((product) => product.id));
 
@@ -201,7 +210,7 @@ for (const program of parsed.programs) {
   );
 
   // Re-derive the id after the upsert so re-runs reuse the existing program.
-  const [existing] = queryRows(
+  const [existing] = db.query(
     `SELECT id FROM application_programs WHERE name = ${sqlText(program.name)} AND season_year = ${SEASON_YEAR};`,
   );
   const resolvedProgramId = existing?.id ?? programId;
@@ -234,7 +243,7 @@ for (const program of parsed.programs) {
   }
 }
 
-executeSql(statements.join('\n'), { local });
+db.execute(statements.join('\n'));
 
 console.log(
   `\nWritten    : ${creations.length} products, ${parsed.programs.length} programs, ` +
