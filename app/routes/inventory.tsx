@@ -1,7 +1,19 @@
 import { Form, Link, useActionData, useLoaderData, useSearchParams } from 'react-router';
 import type { ActionFunctionArgs, LoaderFunctionArgs } from 'react-router';
 
-import { Alert, Badge, Card, CardHeader, EmptyRow, PageHeader, Table, Td, Th } from '../components/ui';
+import {
+  Alert,
+  Badge,
+  Card,
+  CardHeader,
+  EmptyRow,
+  PageHeader,
+  Pagination,
+  SortLink,
+  Table,
+  Td,
+  Th,
+} from '../components/ui';
 import { ConfirmButton } from '../components/confirm';
 import { ProductForm, type UnitOption } from '../components/product-form';
 import { actionFailure, api, getEnv, requireUser } from '../lib/api.server';
@@ -49,15 +61,30 @@ const TONES: Record<string, 'neutral' | 'info' | 'success' | 'warning'> = {
   misc: 'neutral',
 };
 
+const PAGE_SIZE = 50;
+
 export async function loader({ request, context }: LoaderFunctionArgs) {
   const env = getEnv(context);
   const user = await requireUser(env, request);
 
-  const type = new URL(request.url).searchParams.get('type') ?? '';
-  const query = type ? `&type=${encodeURIComponent(type)}` : '';
+  const url = new URL(request.url);
+  const type = url.searchParams.get('type') ?? '';
+  const q = url.searchParams.get('q') ?? '';
+  const sort = url.searchParams.get('sort') ?? 'name';
+  const direction = url.searchParams.get('direction') ?? 'asc';
+  const offset = Number(url.searchParams.get('offset') ?? 0) || 0;
+
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(offset),
+    sort,
+    direction,
+  });
+  if (type) params.set('type', type);
+  if (q) params.set('q', q);
 
   const [products, lots, units] = await Promise.all([
-    api<ListEnvelope<ProductRow>>(env, request, `/products?limit=200${query}`),
+    api<ListEnvelope<ProductRow>>(env, request, `/products?${params}`),
     api<ListEnvelope<LotRow>>(env, request, '/inventory/lots?limit=50'),
     api<{ data: UnitOption[] }>(env, request, '/units'),
   ]);
@@ -70,6 +97,12 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
     lots: lots.data.map((lot) => ({ ...lot, productName: productName.get(lot.productId) ?? '—' })),
     units: units.data,
     type,
+    q,
+    sort,
+    direction,
+    offset,
+    pageSize: PAGE_SIZE,
+    search: url.search,
     canWrite: can(user.role, 'inventory:write'),
   };
 }
@@ -124,7 +157,8 @@ export async function action({ request, context }: ActionFunctionArgs): Promise<
 }
 
 export default function InventoryRoute() {
-  const { products, total, lots, units, canWrite } = useLoaderData<typeof loader>();
+  const { products, total, lots, units, sort, direction, offset, pageSize, search, canWrite } =
+    useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const [params] = useSearchParams();
   const active = params.get('type') ?? '';
@@ -190,13 +224,28 @@ export default function InventoryRoute() {
           <Table>
             <thead>
               <tr>
-                <Th>SKU</Th>
-                <Th>Name</Th>
-                <Th>Division</Th>
+                <SortLink basePath="/inventory" current={search} field="sku" active={sort === 'sku'} direction={direction}>
+                  SKU
+                </SortLink>
+                <SortLink basePath="/inventory" current={search} field="name" active={sort === 'name'} direction={direction}>
+                  Name
+                </SortLink>
+                <SortLink basePath="/inventory" current={search} field="type" active={sort === 'type'} direction={direction}>
+                  Division
+                </SortLink>
                 <Th>Unit</Th>
                 <Th>EPA / regulatory</Th>
                 <Th className="text-right">On hand</Th>
-                <Th className="text-right">Cost</Th>
+                <SortLink
+                  basePath="/inventory"
+                  current={search}
+                  field="defaultCostCents"
+                  active={sort === 'defaultCostCents'}
+                  direction={direction}
+                  className="text-right"
+                >
+                  Cost
+                </SortLink>
                 <Th />
               </tr>
             </thead>
@@ -269,6 +318,13 @@ export default function InventoryRoute() {
               )}
             </tbody>
           </Table>
+          <Pagination
+            basePath="/inventory"
+            current={search}
+            total={total}
+            limit={pageSize}
+            offset={offset}
+          />
         </Card>
 
         <Card>

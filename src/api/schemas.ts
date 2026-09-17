@@ -129,12 +129,33 @@ export const customerUpdateSchema = customerCreateSchema.partial().extend({
  */
 const SEARCH_TERM_MAX = 40;
 
+/**
+ * Sort direction, and the reason sort keys are whitelisted.
+ *
+ * A column name cannot come from user input: it is interpolated into SQL, so an
+ * unvalidated `sort` parameter is an injection point. Every sortable list accepts
+ * only an enumerated set of keys, which the handler then maps to a real column.
+ */
+export const sortDirectionSchema = z.enum(['asc', 'desc']).default('asc');
+
+export const productSortSchema = z.object({
+  sort: z.enum(['name', 'sku', 'type', 'createdAt', 'defaultCostCents']).default('name'),
+  direction: sortDirectionSchema,
+});
+
+export const customerSortSchema = z.object({
+  sort: z.enum(['name', 'accountNumber', 'createdAt']).default('name'),
+  direction: sortDirectionSchema,
+});
+
 export const listQuerySchema = z.object({
   q: optionalText(SEARCH_TERM_MAX),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
   includeInactive: booleanQuery(false),
 });
+
+export const customerListQuerySchema = listQuerySchema.merge(customerSortSchema);
 
 export const auditListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -184,7 +205,7 @@ export const productUpdateSchema = productCreateSchema.partial().extend({
   isActive: z.boolean().optional(),
 });
 
-export const productListQuerySchema = listQuerySchema.extend({
+export const productListQuerySchema = listQuerySchema.merge(productSortSchema).extend({
   type: oneOf(PRODUCT_TYPES).optional(),
 });
 

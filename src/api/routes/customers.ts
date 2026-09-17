@@ -1,4 +1,4 @@
-import { and, asc, eq, like, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, like, or, sql, type SQL } from 'drizzle-orm';
 import { Hono } from 'hono';
 
 import { createDb } from '../../db';
@@ -7,7 +7,7 @@ import { customers } from '../../db/schema';
 import type { AppEnv } from '../../env';
 import { conflict, notFound, parseJson, parseQuery } from '../lib/http';
 import { requireAuth, requirePermission } from '../middleware';
-import { customerCreateSchema, customerUpdateSchema, listQuerySchema } from '../schemas';
+import { customerCreateSchema, customerListQuerySchema, customerUpdateSchema } from '../schemas';
 import { recordAudit, recordChange } from '../../services/audit';
 
 export const customerRoutes = new Hono<AppEnv>();
@@ -34,16 +34,26 @@ function customerFilters(options: { q?: string; includeInactive: boolean }): SQL
 }
 
 customerRoutes.get('/', requirePermission('crm:read'), async (c) => {
-  const { q, limit, offset, includeInactive } = parseQuery(new URL(c.req.url), listQuerySchema);
+  const { q, limit, offset, includeInactive, sort, direction } = parseQuery(
+    new URL(c.req.url),
+    customerListQuerySchema,
+  );
   const db = createDb(c.env.DB);
   const where = customerFilters({ q, includeInactive });
+
+  // Whitelisted keys mapped to real columns; the key itself never reaches SQL.
+  const sortColumn = {
+    name: customers.name,
+    accountNumber: customers.accountNumber,
+    createdAt: customers.createdAt,
+  }[sort];
 
   const [rows, counted] = await Promise.all([
     db
       .select()
       .from(customers)
       .where(where)
-      .orderBy(asc(customers.name))
+      .orderBy(direction === 'desc' ? desc(sortColumn) : asc(sortColumn))
       .limit(limit)
       .offset(offset)
       .all(),

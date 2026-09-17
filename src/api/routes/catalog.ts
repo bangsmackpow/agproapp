@@ -151,11 +151,20 @@ catalogRoutes.post('/units', requirePermission('admin:settings'), async (c) => {
 
 /* ── Products ──────────────────────────────────────────────────────────────── */
 catalogRoutes.get('/products', requirePermission('inventory:read'), async (c) => {
-  const { q, limit, offset, includeInactive, type } = parseQuery(
+  const { q, limit, offset, includeInactive, type, sort, direction } = parseQuery(
     new URL(c.req.url),
     productListQuerySchema,
   );
   const db = createDb(c.env.DB);
+
+  // Whitelisted keys mapped to real columns; the key itself never reaches SQL.
+  const sortColumn = {
+    name: products.name,
+    sku: products.sku,
+    type: products.type,
+    createdAt: products.createdAt,
+    defaultCostCents: products.defaultCostCents,
+  }[sort];
 
   const conditions: SQL[] = [];
   if (!includeInactive) conditions.push(eq(products.isActive, true));
@@ -178,7 +187,7 @@ catalogRoutes.get('/products', requirePermission('inventory:read'), async (c) =>
       .select()
       .from(products)
       .where(where)
-      .orderBy(asc(products.name))
+      .orderBy(direction === 'desc' ? desc(sortColumn) : asc(sortColumn))
       .limit(limit)
       .offset(offset)
       .all(),

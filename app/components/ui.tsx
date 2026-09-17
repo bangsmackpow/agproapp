@@ -261,3 +261,111 @@ export function Stat({ label, value, hint }: { label: string; value: string; hin
     </Card>
   );
 }
+
+/* ── Pagination and sorting ────────────────────────────────────────────────── */
+
+/** Builds a URL that changes one query parameter, preserving the rest. */
+export function withParam(
+  basePath: string,
+  current: string,
+  changes: Record<string, string | number | undefined>,
+): string {
+  const params = new URLSearchParams(current);
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined) params.delete(key);
+    else params.set(key, String(value));
+  }
+  return `${basePath}?${params.toString()}`;
+}
+
+/**
+ * Sortable column heading.
+ *
+ * Clicking toggles direction, and the sort key is a fixed string the API
+ * whitelists — a column name never travels from the browser.
+ */
+export function SortLink({
+  basePath,
+  current,
+  field,
+  active,
+  direction,
+  children,
+  className,
+}: {
+  basePath: string;
+  current: string;
+  field: string;
+  active: boolean;
+  direction: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  const nextDirection = active && direction === 'asc' ? 'desc' : 'asc';
+
+  return (
+    <th
+      className={cn(
+        'border-b border-border px-3 py-2 text-left text-xs font-semibold tracking-wide text-ink-muted uppercase',
+        className,
+      )}
+    >
+      <a
+        className="inline-flex items-center gap-1 hover:text-ink"
+        href={withParam(basePath, current, { sort: field, direction: nextDirection, offset: 0 })}
+      >
+        {children}
+        <span aria-hidden="true">{active ? (direction === 'asc' ? '▲' : '▼') : ''}</span>
+      </a>
+    </th>
+  );
+}
+
+/**
+ * Paging control. Renders nothing when everything fits on one page, so short
+ * lists do not grow chrome they do not need.
+ */
+export function Pagination({
+  basePath,
+  current,
+  total,
+  limit,
+  offset,
+}: {
+  basePath: string;
+  current: string;
+  total: number;
+  limit: number;
+  offset: number;
+}) {
+  const pages = Math.max(1, Math.ceil(total / limit));
+  if (pages <= 1) return null;
+
+  const page = Math.floor(offset / limit) + 1;
+
+  return (
+    <nav className="flex flex-wrap items-center justify-between gap-2 border-t border-border p-3 text-sm">
+      <span className="text-ink-muted">
+        Page {page} of {pages} · {total} total
+      </span>
+      <div className="flex items-center gap-2">
+        {offset > 0 ? (
+          <a
+            className="rounded-md bg-white px-3 py-1.5 text-ink ring-1 ring-border"
+            href={withParam(basePath, current, { offset: Math.max(0, offset - limit) })}
+          >
+            Newer
+          </a>
+        ) : null}
+        {offset + limit < total ? (
+          <a
+            className="rounded-md bg-white px-3 py-1.5 text-ink ring-1 ring-border"
+            href={withParam(basePath, current, { offset: offset + limit })}
+          >
+            Older
+          </a>
+        ) : null}
+      </div>
+    </nav>
+  );
+}
