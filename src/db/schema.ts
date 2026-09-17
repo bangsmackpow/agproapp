@@ -234,6 +234,25 @@ export const customers = sqliteTable(
   ],
 );
 
+/**
+ * Account-number sequence for customers.
+ *
+ * Matches the `invoice_sequences` shape, minus `scope` — there is only ever one
+ * customer sequence, so a discriminator would be noise.
+ *
+ * The starting row is inserted by the migration rather than the reference seed.
+ * Invoice numbering depends on a hand-applied seed, which means a database that
+ * has been migrated but not seeded cannot write an invoice at all; that trap is
+ * worth not repeating. `next_number` is the *first number to be issued*, not the
+ * last used.
+ */
+export const customerSequences = sqliteTable('customer_sequences', {
+  id: primaryId(),
+  prefix: text('prefix').notNull().default('AGP'),
+  nextNumber: integer('next_number').notNull().default(57),
+  ...timestamps(),
+});
+
 /* ════════════════════════════════════════════════════════════════════════════
  * 3. VENDORS, DOCUMENTS & INGESTION
  * ════════════════════════════════════════════════════════════════════════════ */

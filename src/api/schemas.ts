@@ -86,7 +86,16 @@ const addressShape = {
 };
 
 export const customerCreateSchema = z.object({
-  accountNumber: z.string().trim().min(1).max(40),
+  /**
+   * No `accountNumber`: the server allocates it from `customer_sequences`, so the
+   * field is absent here rather than optional. Zod strips unknown keys, so a
+   * client-supplied value is ignored rather than rejected — the number identifies
+   * the account and must not be chosen, or two people can pick the same one and
+   * the sequence falls out of step with reality.
+   *
+   * It is likewise absent from `customerUpdateSchema`, which derives from this,
+   * so an existing account cannot be renumbered.
+   */
   name: z.string().trim().min(1).max(200),
   contactName: optionalText(120),
   phone: optionalText(30),

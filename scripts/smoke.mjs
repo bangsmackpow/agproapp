@@ -35,7 +35,11 @@ const PASSWORD = generatePassword();
  * so the run ensures one exists and removes everything it created afterwards.
  */
 const PRICE_TIER_KEY = 'cash_app';
-const CUSTOMER_PREFIX = 'SMOKE-';
+/**
+ * Customers are now identified by an allocated `AGP-###` number, so teardown
+ * cannot key off a `SMOKE-` prefix any more. The name is what marks a record as
+ * the run's own.
+ */
 const CUSTOMER_NAME = 'Smoke Invoice Customer';
 const PRODUCT_NAME = 'Smoke Audit Product';
 
@@ -126,7 +130,9 @@ function removeSmokeUser() {
   // from the application, which is deliberate. Invoices are the same story —
   // their lines and delivery records point at them.
   const smokeProducts = `(SELECT id FROM products WHERE sku LIKE 'SMOKE-%')`;
-  const smokeCustomers = `(SELECT id FROM customers WHERE account_number LIKE '${CUSTOMER_PREFIX}%')`;
+  // By name: the account number is allocated by the server and is no longer
+  // recognisable as belonging to this run.
+  const smokeCustomers = `(SELECT id FROM customers WHERE name = ${sqlText(CUSTOMER_NAME)})`;
   const smokeInvoices = `(SELECT id FROM invoices WHERE customer_id IN ${smokeCustomers})`;
 
   executeSql(
@@ -136,7 +142,7 @@ function removeSmokeUser() {
       `DELETE FROM audit_logs WHERE entity_type = 'invoice' AND entity_id IN ${smokeInvoices};`,
       `DELETE FROM invoices WHERE customer_id IN ${smokeCustomers};`,
       `DELETE FROM audit_logs WHERE entity_type = 'customer' AND entity_id IN ${smokeCustomers};`,
-      `DELETE FROM customers WHERE account_number LIKE '${CUSTOMER_PREFIX}%';`,
+      `DELETE FROM customers WHERE name = ${sqlText(CUSTOMER_NAME)};`,
       `DELETE FROM inventory_movements WHERE product_id IN ${smokeProducts};`,
       `DELETE FROM inventory_lots WHERE product_id IN ${smokeProducts};`,
       `DELETE FROM product_costs WHERE product_id IN ${smokeProducts};`,
@@ -320,10 +326,18 @@ async function run() {
       const { body: customer } = await jsonRequest('/api/customers', cookie, {
         method: 'POST',
         body: JSON.stringify({
-          accountNumber: `${CUSTOMER_PREFIX}${Date.now()}`,
+          // No accountNumber: the server allocates it from the sequence.
           name: CUSTOMER_NAME,
         }),
       });
+
+      // Allocated server-side, so this also proves the sequence row exists — which
+      // is why it lives in a migration rather than the reference seed.
+      check(
+        'the server allocates an AGP account number',
+        /^AGP-\d{3,}$/.test(customer?.data?.accountNumber ?? ''),
+        `got ${JSON.stringify(customer?.data?.accountNumber)}`,
+      );
 
       if (customer?.data?.id) {
         // The composer lives on its own route now, so the form's data endpoint

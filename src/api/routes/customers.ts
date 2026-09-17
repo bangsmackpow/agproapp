@@ -9,6 +9,7 @@ import { conflict, notFound, parseJson, parseQuery } from '../lib/http';
 import { requireAuth, requirePermission } from '../middleware';
 import { customerCreateSchema, customerListQuerySchema, customerUpdateSchema } from '../schemas';
 import { recordAudit, recordChange } from '../../services/audit';
+import { allocateCustomerNumber } from '../../services/customers';
 
 export const customerRoutes = new Hono<AppEnv>();
 
@@ -79,7 +80,12 @@ customerRoutes.post('/', requirePermission('crm:write'), async (c) => {
   const actor = c.get('user');
 
   try {
-    const [created] = await db.insert(customers).values(input).returning();
+    // Allocated here, never accepted from the client. See the note in schemas.ts.
+    const accountNumber = await allocateCustomerNumber(db);
+    const [created] = await db
+      .insert(customers)
+      .values({ ...input, accountNumber })
+      .returning();
     if (!created) throw conflict('Failed to create customer');
 
     await recordAudit(db, {
@@ -93,7 +99,13 @@ customerRoutes.post('/', requirePermission('crm:write'), async (c) => {
     return c.json({ data: created }, 201);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
-      throw conflict(`Account number "${input.accountNumber}" is already in use`);
+      // The account number is no longer client-supplied, so a collision can no
+      // longer come from the request. Reaching here means the sequence handed out
+      // a number that already exists — usually because an account was created
+      // outside the app, or loaded with a number the sequence has not passed yet.
+      throw conflict(
+        'Could not allocate a unique account number. The customer number sequence needs attention.',
+      );
     }
     throw error;
   }

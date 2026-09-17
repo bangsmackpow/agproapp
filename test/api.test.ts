@@ -321,16 +321,30 @@ describe('RBAC enforcement', () => {
     expect(created.status).toBe(201);
   });
 
-  it('reports a duplicate account number as a conflict, not a server error', async () => {
-    const duplicate = await api('/api/customers', {
+  it('ignores a client-supplied account number and allocates its own', async () => {
+    // Account numbers come from a sequence and identify the account, so a caller
+    // must not be able to choose one. Supplying the same value twice has to yield
+    // two *distinct* allocated numbers rather than the conflict a duplicate used
+    // to produce — that conflict is now unreachable from the API by construction.
+    const first = await api('/api/customers', {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({ accountNumber: 'AGP-002', name: 'Walnut Creek Coop' }),
+    });
+    expect(first.status).toBe(201);
+    const firstBody = (await first.json()) as { data: { accountNumber: string } };
+    expect(firstBody.data.accountNumber).toMatch(/^AGP-\d{3,}$/);
+
+    const second = await api('/api/customers', {
       method: 'POST',
       cookie: salesCookie,
       body: JSON.stringify({ accountNumber: 'AGP-002', name: 'Duplicate Attempt' }),
     });
+    expect(second.status).toBe(201);
+    const secondBody = (await second.json()) as { data: { accountNumber: string } };
 
-    expect(duplicate.status).toBe(409);
-    const body = (await duplicate.json()) as { error: { code: string } };
-    expect(body.error.code).toBe('conflict');
+    expect(secondBody.data.accountNumber).toMatch(/^AGP-\d{3,}$/);
+    expect(secondBody.data.accountNumber).not.toBe(firstBody.data.accountNumber);
   });
 
   it('lets sales users read inventory but not write it', async () => {

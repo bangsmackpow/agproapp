@@ -61,9 +61,6 @@ export function CustomerForm({
       {customer?.id ? <input type="hidden" name="customerId" value={customer.id} /> : null}
 
       <Section title="Identity">
-        <Field label="Account number">
-          <Input name="accountNumber" required defaultValue={value('accountNumber')} placeholder="AGP-003" />
-        </Field>
         <Field label="Name">
           <Input name="name" required defaultValue={value('name')} placeholder="Prairie Ridge Farms" />
         </Field>

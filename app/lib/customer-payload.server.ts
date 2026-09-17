@@ -23,7 +23,6 @@ export function parseCustomerForm(form: FormData) {
   const flag = (key: string): boolean => String(form.get(key) ?? '') === 'true';
 
   return {
-    accountNumber: String(form.get('accountNumber') ?? '').trim(),
     name: String(form.get('name') ?? '').trim(),
     contactName: text('contactName'),
     phone: text('phone'),
