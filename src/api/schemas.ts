@@ -219,6 +219,34 @@ export const droneUnitCreateSchema = z.object({
   notes: optionalText(1000),
 });
 
+/* ── Inventory movements ───────────────────────────────────────────────────── */
+
+/**
+ * Receiving stock writes a lot *and* a ledger movement.
+ *
+ * Creating a lot alone would not change the pool, because the pool is the sum of
+ * movements — so the two must travel together.
+ */
+export const stockReceiptSchema = z.object({
+  quantity: z.number().positive(),
+  unit: optionalText(20),
+  unitCostCents: cents().optional(),
+  lotNumber: optionalText(80),
+  seedNumber: optionalText(60),
+  warehouseId: id().optional(),
+  sourceVendorId: id().optional(),
+  expirationDate: z.coerce.date().optional(),
+  receivedAt: z.coerce.date().optional(),
+  note: optionalText(500),
+});
+
+/** A physical-count correction. A reason is required: "why" is the whole value. */
+export const stockAdjustSchema = z.object({
+  delta: z.number(),
+  unit: optionalText(20),
+  reason: z.string().trim().min(1).max(500),
+});
+
 /* ── Units of measure ──────────────────────────────────────────────────────── */
 
 export const unitCreateSchema = z.object({

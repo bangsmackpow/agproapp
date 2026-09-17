@@ -17,6 +17,7 @@ export default [
     index('routes/dashboard.tsx'),
     route('customers', 'routes/customers.tsx'),
     route('inventory', 'routes/inventory.tsx'),
+    route('inventory/:id', 'routes/product-detail.tsx'),
     route('invoices', 'routes/invoices.tsx'),
     route('invoices/:id', 'routes/invoice-detail.tsx'),
     route('checks', 'routes/checks.tsx'),

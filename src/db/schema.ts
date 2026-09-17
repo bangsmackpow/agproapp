@@ -465,7 +465,7 @@ export const productCosts = sqliteTable(
       .notNull()
       .references(() => products.id, { onDelete: 'cascade' }),
     costCents: integer('cost_cents').notNull(),
-    unit: text('unit', { enum: UNITS }),
+    unit: text('unit'),
     effectiveFrom: integer('effective_from', { mode: 'timestamp_ms' }).notNull(),
     effectiveTo: integer('effective_to', { mode: 'timestamp_ms' }),
     sourceVendorId: text('source_vendor_id').references(() => vendors.id, { onDelete: 'set null' }),

@@ -2,8 +2,10 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import type { Database } from '../db';
 import {
+  customers,
   inventoryLots,
   inventoryMovements,
+  invoices,
   products,
   units,
   type InventoryMovement,
@@ -198,9 +200,56 @@ export async function recordMovements(
   await db.insert(inventoryMovements).values([...movements]);
 }
 
+export interface CustomerSales {
+  customerId: string;
+  customerName: string;
+  /** Positive quantity sold, in the product's base unit. */
+  quantity: number;
+  movementCount: number;
+  lastSoldAt: Date | null;
+}
+
+/**
+ * Who bought this product, and how much.
+ *
+ * Sourced from the ledger rather than from invoice lines, so it reflects what was
+ * actually drawn from stock and stays correct after a reversal. Reversals are
+ * excluded by filtering to `sale` movements, and a cancelled sale re-appears here
+ * only if it was cancelled and then re-sent, which is the truth of the matter.
+ */
+export async function salesByCustomer(db: Database, productId: string): Promise<CustomerSales[]> {
+  const rows = await db
+    .select({
+      customerId: invoices.customerId,
+      customerName: customers.name,
+      quantity: sql<number>`COALESCE(SUM(-${inventoryMovements.quantityInBase}), 0)`,
+      movementCount: sql<number>`COUNT(*)`,
+      lastSoldAt: sql<number>`MAX(${inventoryMovements.occurredAt})`,
+    })
+    .from(inventoryMovements)
+    .innerJoin(invoices, eq(invoices.id, inventoryMovements.referenceId))
+    .innerJoin(customers, eq(customers.id, invoices.customerId))
+    .where(
+      and(
+        eq(inventoryMovements.productId, productId),
+        eq(inventoryMovements.movementType, 'sale'),
+      ),
+    )
+    .groupBy(invoices.customerId, customers.name)
+    .orderBy(sql`COALESCE(SUM(-${inventoryMovements.quantityInBase}), 0) DESC`)
+    .all();
+
+  return rows.map((row) => ({
+    customerId: row.customerId,
+    customerName: row.customerName,
+    quantity: tidyQuantity(Number(row.quantity)),
+    movementCount: Number(row.movementCount),
+    lastSoldAt: row.lastSoldAt ? new Date(Number(row.lastSoldAt)) : null,
+  }));
+}
+
 /** Convenience for a movement tied to a document. */
-export function movementReference(
-  type: MovementReferenceType,
+export function movementReference(  type: MovementReferenceType,
   id: string,
 ): { referenceType: MovementReferenceType; referenceId: string } {
   return { referenceType: type, referenceId: id };

@@ -77,13 +77,22 @@ function createSmokeUser() {
 }
 
 function removeSmokeUser() {
+  // Order matters: inventory_movements references products with ON DELETE
+  // restrict, so the ledger has to go before the product it describes. That
+  // constraint is the reason a product with movements cannot be deleted at all
+  // from the application, which is deliberate.
+  const smokeProducts = `(SELECT id FROM products WHERE sku LIKE 'SMOKE-%')`;
+
   executeSql(
     [
-      `DELETE FROM users WHERE email = ${sqlText(EMAIL)};`,
-      `DELETE FROM login_attempts WHERE email = ${sqlText(EMAIL)};`,
-      // Products created by the audit check, so repeat runs do not accumulate.
-      `DELETE FROM audit_logs WHERE entity_id IN (SELECT id FROM products WHERE sku LIKE 'SMOKE-%');`,
+      `DELETE FROM inventory_movements WHERE product_id IN ${smokeProducts};`,
+      `DELETE FROM inventory_lots WHERE product_id IN ${smokeProducts};`,
+      `DELETE FROM product_costs WHERE product_id IN ${smokeProducts};`,
+      `DELETE FROM audit_logs WHERE entity_id IN ${smokeProducts};`,
       `DELETE FROM products WHERE sku LIKE 'SMOKE-%';`,
+      `DELETE FROM audit_logs WHERE actor_user_id IN (SELECT id FROM users WHERE email = ${sqlText(EMAIL)}) OR entity_id IN (SELECT id FROM users WHERE email = ${sqlText(EMAIL)});`,
+      `DELETE FROM login_attempts WHERE email = ${sqlText(EMAIL)};`,
+      `DELETE FROM users WHERE email = ${sqlText(EMAIL)};`,
     ].join('\n'),
   );
 }
@@ -207,6 +216,37 @@ async function run() {
         'the audit trail records who changed what, including the previous value',
         change?.from === 'gal' && change?.to === 'oz',
         `expected gal -> oz, got ${JSON.stringify(change)}`,
+      );
+
+      /* ── Receiving stock moves the pool ─────────────────────────────────── */
+      // The pool is the sum of ledger movements, so a receipt that writes a lot but
+      // no movement would leave stock invisible. This asserts the two travel
+      // together.
+      const { response: received, body: receipt } = await jsonRequest(
+        `/api/products/${productId}/receipts`,
+        cookie,
+        { method: 'POST', body: JSON.stringify({ quantity: 10, unit: 'oz', unitCostCents: 1477 }) },
+      );
+      check('stock can be received', received.status === 201, JSON.stringify(receipt));
+
+      const { body: afterReceive } = await jsonRequest(`/api/products/${productId}/stock`, cookie);
+      check(
+        'receiving stock raises the pool',
+        afterReceive?.data?.quantityOnHand === 10,
+        `expected 10, got ${JSON.stringify(afterReceive?.data?.quantityOnHand)}`,
+      );
+
+      await jsonRequest(`/api/products/${productId}/adjustments`, cookie, {
+        method: 'POST',
+        body: JSON.stringify({ delta: -3, unit: 'oz', reason: 'Annual count' }),
+      });
+
+      const { body: afterAdjust } = await jsonRequest(`/api/products/${productId}/stock`, cookie);
+      check(
+        'an adjustment with a reason moves the pool and is recorded in the ledger',
+        afterAdjust?.data?.quantityOnHand === 7 &&
+          afterAdjust?.data?.ledger?.some((row) => row.movementType === 'adjustment'),
+        `pool ${JSON.stringify(afterAdjust?.data?.quantityOnHand)}, ledger ${afterAdjust?.data?.ledger?.length}`,
       );
     }
 

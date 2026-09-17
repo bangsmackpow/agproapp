@@ -8,6 +8,7 @@ import {
   droneUnits,
   inventoryLots,
   products,
+  productCosts,
   programIngredients,
   programPrices,
   units,
@@ -24,11 +25,24 @@ import {
   productCreateSchema,
   productListQuerySchema,
   productUpdateSchema,
+  stockAdjustSchema,
+  stockReceiptSchema,
   unitCreateSchema,
 } from '../schemas';
 import { recordAudit, recordChange } from '../../services/audit';
 import { listActiveTiers } from '../../services/pricing';
 import { assertKnownUnits, listUnits } from '../../services/units';
+import {
+  convertToBase,
+  movementReference,
+  poolQuantitiesByProduct,
+  productLedger,
+  productPoolQuantity,
+  receiptsWithRemaining,
+  recordMovements,
+  salesByCustomer,
+  tidyQuantity,
+} from '../../services/inventory';
 
 export const catalogRoutes = new Hono<AppEnv>();
 
@@ -171,7 +185,186 @@ catalogRoutes.get('/products', requirePermission('inventory:read'), async (c) =>
     db.select({ total: sql<number>`count(*)` }).from(products).where(where).get(),
   ]);
 
-  return c.json({ data: rows, pagination: { limit, offset, total: Number(counted?.total ?? 0) } });
+  // Pooled stock alongside each row, so the list answers "how much is there"
+  // without a second trip per product.
+  const pools = await poolQuantitiesByProduct(db);
+
+  return c.json({
+    data: rows.map((product) => ({
+      ...product,
+      baseUnit: product.baseUnitCode ?? product.unit,
+      quantityOnHand: pools.get(product.id) ?? 0,
+    })),
+    pagination: { limit, offset, total: Number(counted?.total ?? 0) },
+  });
+});
+
+/**
+ * Stock for one product: the pool, where it came from, and where it went.
+ *
+ * The pool is the headline number; receipts and the ledger sit underneath it so a
+ * "where did this come from" question can be answered without leaving the screen.
+ */
+catalogRoutes.get('/products/:id/stock', requirePermission('inventory:read'), async (c) => {
+  const db = createDb(c.env.DB);
+  const id = c.req.param('id');
+
+  await assertKnownUnits(db, []);
+  const product = await db.select().from(products).where(eq(products.id, id)).get();
+  if (!product) throw notFound('Product not found');
+
+  const [pool, receipts, ledger, sold] = await Promise.all([
+    productPoolQuantity(db, id),
+    receiptsWithRemaining(db, id),
+    productLedger(db, id),
+    salesByCustomer(db, id),
+  ]);
+
+  return c.json({
+    data: {
+      productId: id,
+      baseUnit: product.baseUnitCode ?? product.unit,
+      quantityOnHand: pool,
+      receipts,
+      ledger,
+      salesByCustomer: sold,
+      totalSold: tidyQuantity(sold.reduce((total, row) => total + row.quantity, 0)),
+    },
+  });
+});
+
+/**
+ * Receives stock: creates a receipt and logs the movement.
+ *
+ * The lot records provenance and cost; the movement is what actually changes the
+ * pool. Doing only one of the two is how an inventory screen starts lying.
+ */
+catalogRoutes.post('/products/:id/receipts', requirePermission('inventory:write'), async (c) => {
+  const input = await parseJson(c.req.raw, stockReceiptSchema);
+  const db = createDb(c.env.DB);
+  const actor = c.get('user');
+  const id = c.req.param('id');
+
+  const product = await db.select().from(products).where(eq(products.id, id)).get();
+  if (!product) throw notFound('Product not found');
+
+  const baseUnit = product.baseUnitCode ?? product.unit;
+  const { quantityInBase, converted } = await convertToBase(
+    db,
+    input.unit ?? product.unit,
+    baseUnit,
+    input.quantity,
+  );
+
+  const receivedAt = input.receivedAt ?? new Date();
+
+  const [lot] = await db
+    .insert(inventoryLots)
+    .values({
+      productId: product.id,
+      warehouseId: input.warehouseId ?? null,
+      lotNumber: input.lotNumber ?? null,
+      seedNumber: input.seedNumber ?? null,
+      quantityOnHand: quantityInBase,
+      unitCostCents: input.unitCostCents ?? null,
+      expirationDate: input.expirationDate ?? null,
+      receivedAt,
+      sourceVendorId: input.sourceVendorId ?? null,
+    })
+    .returning();
+
+  if (!lot) throw conflict('Failed to create the receipt');
+
+  await recordMovements(db, [
+    {
+      productId: product.id,
+      lotId: lot.id,
+      movementType: 'receipt',
+      quantityDelta: quantityInBase,
+      unit: baseUnit,
+      quantityInBase,
+      unitCostCents: input.unitCostCents ?? null,
+      ...movementReference('manual', lot.id),
+      occurredAt: receivedAt,
+      createdByUserId: actor.id,
+      note: converted
+        ? (input.note ?? `Received ${input.quantity} ${input.unit ?? product.unit}`)
+        : `${input.note ?? 'Received'} (unit ${input.unit ?? '?'} could not be converted to ${baseUnit})`,
+    },
+  ]);
+
+  // Cost history is what keeps margin honest when a vendor price changes.
+  if (input.unitCostCents !== undefined) {
+    await db.insert(productCosts).values({
+      productId: product.id,
+      costCents: input.unitCostCents,
+      unit: input.unit ?? product.unit,
+      effectiveFrom: receivedAt,
+      sourceVendorId: input.sourceVendorId ?? null,
+      notes: input.note ?? null,
+    });
+  }
+
+  await recordAudit(db, {
+    actorUserId: actor.id,
+    action: 'inventory.received',
+    entityType: 'product',
+    entityId: product.id,
+    metadata: {
+      lotId: lot.id,
+      quantity: quantityInBase,
+      unit: baseUnit,
+      unitCostCents: input.unitCostCents ?? null,
+      lotNumber: input.lotNumber ?? null,
+    },
+    ipAddress: c.req.header('cf-connecting-ip') ?? null,
+  });
+
+  return c.json({ data: { lot, quantityInBase, baseUnit, converted } }, 201);
+});
+
+/** A physical-count correction. Recorded as a movement, never as an edit. */
+catalogRoutes.post('/products/:id/adjustments', requirePermission('inventory:write'), async (c) => {
+  const input = await parseJson(c.req.raw, stockAdjustSchema);
+  const db = createDb(c.env.DB);
+  const actor = c.get('user');
+  const id = c.req.param('id');
+
+  const product = await db.select().from(products).where(eq(products.id, id)).get();
+  if (!product) throw notFound('Product not found');
+
+  const baseUnit = product.baseUnitCode ?? product.unit;
+  const { quantityInBase, converted } = await convertToBase(
+    db,
+    input.unit ?? product.unit,
+    baseUnit,
+    input.delta,
+  );
+
+  await recordMovements(db, [
+    {
+      productId: product.id,
+      movementType: 'adjustment',
+      quantityDelta: quantityInBase,
+      unit: baseUnit,
+      quantityInBase,
+      ...movementReference('manual', id),
+      occurredAt: new Date(),
+      createdByUserId: actor.id,
+      note: converted ? input.reason : `${input.reason} (unit could not be converted to ${baseUnit})`,
+    },
+  ]);
+
+  await recordAudit(db, {
+    actorUserId: actor.id,
+    action: 'inventory.adjusted',
+    entityType: 'product',
+    entityId: product.id,
+    metadata: { delta: quantityInBase, unit: baseUnit, reason: input.reason },
+    ipAddress: c.req.header('cf-connecting-ip') ?? null,
+  });
+
+  return c.json({ data: { productId: id, delta: quantityInBase, baseUnit } }, 201);
 });
 
 catalogRoutes.get('/products/:id', requirePermission('inventory:read'), async (c) => {
