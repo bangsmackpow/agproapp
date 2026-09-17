@@ -7,13 +7,13 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
   CardHeader,
   EmptyRow,
   Field,
   Input,
   PageHeader,
   Select,
+  Status,
   Table,
   Td,
   Th,
@@ -216,8 +216,8 @@ export default function ChecksRoute() {
         </div>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
+      <div className="space-y-3">
+        <div className="rounded-md border border-border">
           <CardHeader title="Issued checks" description="Draft, printed, cleared and voided" />
           <Table>
             <thead>
@@ -246,7 +246,7 @@ export default function ChecksRoute() {
                     <Td>{formatDate(check.paymentDate)}</Td>
                     <Td className="tabular text-right">{formatCents(check.amountCents)}</Td>
                     <Td>
-                      <Badge tone={statusTone(check.status)}>{check.status}</Badge>
+                      <Status tone={statusTone(check.status)}>{check.status}</Status>
                     </Td>
                     <Td>
                       <div className="flex flex-wrap gap-2">
@@ -293,10 +293,10 @@ export default function ChecksRoute() {
               )}
             </tbody>
           </Table>
-        </Card>
+        </div>
 
         <div className="space-y-6">
-          <Card>
+          <div className="rounded-md border border-border">
             <CardHeader
               title="Issue a check"
               description={
@@ -305,7 +305,7 @@ export default function ChecksRoute() {
                   : 'Add a bank account first'
               }
             />
-            <Form method="post" className="space-y-3 p-4">
+            <Form method="post" className="space-y-2 p-3">
               <input type="hidden" name="intent" value="check" />
               <Field label="Bank account">
                 <Select name="bankAccountId" required defaultValue={accounts[0]?.id ?? ''}>
@@ -329,11 +329,11 @@ export default function ChecksRoute() {
                 Issue draft check
               </Button>
             </Form>
-          </Card>
+          </div>
 
-          <Card>
+          <div className="rounded-md border border-border">
             <CardHeader title="Add a bank account" />
-            <Form method="post" className="space-y-3 p-4">
+            <Form method="post" className="space-y-2 p-3">
               <input type="hidden" name="intent" value="account" />
               <Field label="Account name">
                 <Input name="name" required placeholder="Operating" />
@@ -356,14 +356,14 @@ export default function ChecksRoute() {
                 Add account
               </Button>
             </Form>
-          </Card>
+          </div>
 
-          <Card>
+          <div className="rounded-md border border-border">
             <CardHeader
               title="Check stock calibration"
               description="Inches from the top-left of the sheet. Print a check, measure how far off it is, adjust, reprint."
             />
-            <Form method="post" className="space-y-3 p-4">
+            <Form method="post" className="space-y-2 p-3">
               <input type="hidden" name="intent" value="template" />
 
               <div className="grid grid-cols-2 gap-3">
@@ -457,7 +457,7 @@ export default function ChecksRoute() {
                 Save template
               </Button>
             </Form>
-          </Card>
+          </div>
         </div>
       </div>
     </>

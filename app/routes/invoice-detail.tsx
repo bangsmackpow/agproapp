@@ -5,12 +5,12 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
   CardHeader,
   EmptyRow,
   Field,
   Input,
   PageHeader,
+  Status,
   Table,
   Td,
   Th,
@@ -178,7 +178,7 @@ export default function InvoiceDetailRoute() {
         description={`${invoice.customerName} · issued ${formatDate(invoice.issueDate)}`}
         actions={
           <div className="flex items-center gap-3">
-            <Badge tone={statusTone(invoice.status)}>{invoice.status}</Badge>
+            <Status tone={statusTone(invoice.status)}>{invoice.status}</Status>
             <Link
               className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-ink ring-1 ring-border"
               to={`/invoices/${invoice.id}/print`}
@@ -229,7 +229,7 @@ export default function InvoiceDetailRoute() {
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
+        <div className="rounded-md border border-border">
           <CardHeader title="Line items" description={`Pricing tier: ${invoice.pricingTierKey ?? '—'}`} />
           <Table>
             <thead>
@@ -302,10 +302,10 @@ export default function InvoiceDetailRoute() {
               <dd className="tabular">{formatCents(invoice.balanceCents)}</dd>
             </div>
           </dl>
-        </Card>
+        </div>
 
         <div className="space-y-6">
-          <Card>
+          <div className="rounded-md border border-border">
             <CardHeader title="Invoice details" />
             <dl className="space-y-2 p-4 text-sm">
               <div className="flex justify-between gap-3">
@@ -321,12 +321,12 @@ export default function InvoiceDetailRoute() {
                 <dd>{formatDate(invoice.complianceVerifiedAt)}</dd>
               </div>
             </dl>
-          </Card>
+          </div>
 
           {isOpen ? (
-            <Card>
+            <div className="rounded-md border border-border">
               <CardHeader title="Actions" />
-              <div className="space-y-3 p-4">
+              <div className="space-y-2 p-3">
                 {invoice.status === 'draft' && permissions.send ? (
                   <Form method="post">
                     <input type="hidden" name="intent" value="send" />
@@ -385,10 +385,10 @@ export default function InvoiceDetailRoute() {
                   </Form>
                 ) : null}
               </div>
-            </Card>
+            </div>
           ) : null}
 
-          <Card>
+          <div className="rounded-md border border-border">
             <CardHeader
               title="Delivery history"
               description="What left the office, and whether it actually went"
@@ -412,7 +412,7 @@ export default function InvoiceDetailRoute() {
                       <Td className="break-all">{delivery.destination ?? '—'}</Td>
                       <Td>{formatDate(delivery.sentAt ?? delivery.createdAt)}</Td>
                       <Td>
-                        <Badge tone={statusTone(delivery.status)}>{delivery.status}</Badge>
+                        <Status tone={statusTone(delivery.status)}>{delivery.status}</Status>
                         {delivery.error ? (
                           <span className="mt-1 block text-xs text-danger">{delivery.error}</span>
                         ) : null}
@@ -422,7 +422,7 @@ export default function InvoiceDetailRoute() {
                 )}
               </tbody>
             </Table>
-          </Card>
+          </div>
         </div>
       </div>
     </>

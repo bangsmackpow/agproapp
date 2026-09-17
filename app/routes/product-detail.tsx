@@ -5,12 +5,12 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
   CardHeader,
   EmptyRow,
   Field,
   Input,
   PageHeader,
+  Status,
   Table,
   Td,
   Th,
@@ -217,29 +217,29 @@ export default function ProductDetailRoute() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Card className="p-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-md border border-border px-3 py-2">
           <p className="text-xs font-medium tracking-wide text-ink-muted uppercase">On hand</p>
           <p className="tabular mt-1 text-3xl font-semibold text-ink">
             {formatNumber(stock.quantityOnHand, 3)}{' '}
             <span className="text-base font-normal text-ink-muted">{unit}</span>
           </p>
-        </Card>
-        <Card className="p-4">
+        </div>
+        <div className="rounded-md border border-border px-3 py-2">
           <p className="text-xs font-medium tracking-wide text-ink-muted uppercase">Sold to date</p>
           <p className="tabular mt-1 text-3xl font-semibold text-ink">
             {formatNumber(stock.totalSold, 3)}{' '}
             <span className="text-base font-normal text-ink-muted">{unit}</span>
           </p>
-        </Card>
-        <Card className="p-4">
+        </div>
+        <div className="rounded-md border border-border px-3 py-2">
           <p className="text-xs font-medium tracking-wide text-ink-muted uppercase">Receipts</p>
           <p className="tabular mt-1 text-3xl font-semibold text-ink">{stock.receipts.length}</p>
-        </Card>
+        </div>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
+      <div className="mt-4 grid gap-3 xl:grid-cols-3">
+        <div className="rounded-md border border-border">
           <CardHeader
             title="Sold to"
             description="Drawn from the stock ledger, so reversals are reflected"
@@ -277,13 +277,13 @@ export default function ProductDetailRoute() {
               )}
             </tbody>
           </Table>
-        </Card>
+        </div>
 
         {canWrite ? (
           <div className="space-y-6">
-            <Card>
+            <div className="rounded-md border border-border">
               <CardHeader title="Receive stock" description="Creates a receipt and moves the pool" />
-              <Form method="post" className="space-y-3 p-4">
+              <Form method="post" className="space-y-2 p-3">
                 <input type="hidden" name="intent" value="receive" />
                 <div className="grid grid-cols-2 gap-3">
                   <Field label={`Quantity (${unit})`}>
@@ -306,14 +306,14 @@ export default function ProductDetailRoute() {
                   Receive
                 </Button>
               </Form>
-            </Card>
+            </div>
 
-            <Card>
+            <div className="rounded-md border border-border">
               <CardHeader
                 title="Adjust"
                 description="For a count correction or a write-off. The reason is the record."
               />
-              <Form method="post" className="space-y-3 p-4">
+              <Form method="post" className="space-y-2 p-3">
                 <input type="hidden" name="intent" value="adjust" />
                 <input type="hidden" name="unit" value={unit} />
                 <Field label={`Correction (${unit})`} hint="Negative writes stock off">
@@ -326,13 +326,13 @@ export default function ProductDetailRoute() {
                   Record adjustment
                 </Button>
               </Form>
-            </Card>
+            </div>
           </div>
         ) : null}
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
+      <div className="mt-4 grid gap-3 xl:grid-cols-3">
+        <div className="rounded-md border border-border">
           <CardHeader
             title="Ledger"
             description="Every movement, append-only. Corrections are new rows, not edits."
@@ -356,7 +356,7 @@ export default function ProductDetailRoute() {
                   <tr key={movement.id}>
                     <Td className="whitespace-nowrap">{formatDate(movement.occurredAt)}</Td>
                     <Td>
-                      <Badge tone={statusTone(movement.movementType)}>{movement.movementType}</Badge>
+                      <Status tone={statusTone(movement.movementType)}>{movement.movementType}</Status>
                     </Td>
                     <Td className="tabular text-right">
                       {movement.quantityDelta > 0 ? '+' : ''}
@@ -370,9 +370,9 @@ export default function ProductDetailRoute() {
               )}
             </tbody>
           </Table>
-        </Card>
+        </div>
 
-        <Card>
+        <div className="rounded-md border border-border">
           <CardHeader
             title="Receipts"
             description="Where this stock came from, and what is left on each"
@@ -405,11 +405,11 @@ export default function ProductDetailRoute() {
             Sales draw on the oldest receipt first, and the cost that produces is what keeps margin
             honest when a vendor price changes.
           </p>
-        </Card>
+        </div>
       </div>
 
       {canWrite ? (
-        <Card className="mt-6">
+        <div className="mt-3 rounded-md border border-border">
           <CardHeader
             title="Edit product"
             description="Changes are recorded in the audit trail with their previous values."
@@ -431,7 +431,7 @@ export default function ProductDetailRoute() {
               markupPercent: product.markupPercent,
             }}
           />
-        </Card>
+        </div>
       ) : null}
     </>
   );

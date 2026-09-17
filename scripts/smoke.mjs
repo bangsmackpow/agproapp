@@ -43,12 +43,14 @@ const PRODUCT_NAME = 'Smoke Audit Product';
 const SCREENS = [
   '/',
   '/customers',
+  // Create screens. Listed explicitly because each is a literal route declared
+  // ahead of its `:id` sibling — a mis-ordered table would send them to a record
+  // page instead, which loads fine and would hide the mistake.
+  '/customers/new',
   '/inventory',
-  // The product create screen. Listed explicitly because it is a literal route
-  // declared ahead of `inventory/:id`, and a mis-ordered table would send it to
-  // the record page instead — which loads fine and would hide the mistake.
   '/inventory/new',
   '/invoices',
+  '/invoices/new',
   '/checks',
   '/imports',
   '/audit',
@@ -324,7 +326,9 @@ async function run() {
       });
 
       if (customer?.data?.id) {
-        const submitted = await fetch(`${BASE}/invoices.data`, {
+        // The composer lives on its own route now, so the form's data endpoint
+        // moved with it. Posting to /invoices.data would find no action at all.
+        const submitted = await fetch(`${BASE}/invoices/new.data`, {
           method: 'POST',
           headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({

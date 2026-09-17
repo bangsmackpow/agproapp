@@ -3,7 +3,6 @@ import type { LoaderFunctionArgs } from 'react-router';
 
 import {
   Badge,
-  Card,
   CardHeader,
   EmptyRow,
   Input,
@@ -121,7 +120,7 @@ export default function AuditRoute() {
         description={`${total} recorded event${total === 1 ? '' : 's'}, newest first. Append-only; nothing here is edited or deleted.`}
       />
 
-      <Card className="mb-6">
+      <div className="mb-3 rounded-md border border-border">
         <CardHeader title="Filter" description="Narrow by who, what, or when" />
         <Form method="get" className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
           <label className="block">
@@ -171,18 +170,18 @@ export default function AuditRoute() {
           <div className="flex items-end gap-2">
             <button
               type="submit"
-              className="h-10 rounded-md bg-brand-700 px-4 text-sm font-medium text-white"
+              className="h-8 rounded-md bg-brand-700 px-3 text-sm font-medium text-white"
             >
               Apply
             </button>
-            <Link className="h-10 px-3 py-2 text-sm text-brand-700 underline" to="/audit">
+            <Link className="text-sm text-brand-700 underline" to="/audit">
               Reset
             </Link>
           </div>
         </Form>
-      </Card>
+      </div>
 
-      <Card>
+      <div className="rounded-md border border-border">
         <CardHeader
           title="Events"
           description={`Page ${page} of ${pages}`}
@@ -190,7 +189,7 @@ export default function AuditRoute() {
             <div className="flex items-center gap-2">
               {offset > 0 ? (
                 <Link
-                  className="rounded-md bg-white px-3 py-1.5 text-sm text-ink ring-1 ring-border"
+                  className="rounded-sm border border-border px-2 py-0.5 text-xs text-ink hover:bg-muted"
                   to={pageLink(Math.max(0, offset - pageSize))}
                 >
                   Newer
@@ -198,7 +197,7 @@ export default function AuditRoute() {
               ) : null}
               {offset + pageSize < total ? (
                 <Link
-                  className="rounded-md bg-white px-3 py-1.5 text-sm text-ink ring-1 ring-border"
+                  className="rounded-sm border border-border px-2 py-0.5 text-xs text-ink hover:bg-muted"
                   to={pageLink(offset + pageSize)}
                 >
                   Older
@@ -263,7 +262,7 @@ export default function AuditRoute() {
             )}
           </tbody>
         </Table>
-      </Card>
+      </div>
     </>
   );
 }

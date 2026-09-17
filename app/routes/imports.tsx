@@ -5,13 +5,13 @@ import {
   Alert,
   Badge,
   Button,
-  Card,
   CardHeader,
   EmptyRow,
   Field,
   Input,
   PageHeader,
   Select,
+  Status,
   Table,
   Td,
   Th,
@@ -137,8 +137,8 @@ export default function ImportsRoute() {
         </div>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
+      <div className="space-y-3">
+        <div className="rounded-md border border-border">
           <CardHeader
             title="Review queue"
             description={
@@ -210,7 +210,7 @@ export default function ImportsRoute() {
                       )}
                     </Td>
                     <Td>
-                      <Badge tone={statusTone(draft.status)}>{draft.status}</Badge>
+                      <Status tone={statusTone(draft.status)}>{draft.status}</Status>
                     </Td>
                     <Td>
                       {draft.status === 'pending' ? (
@@ -237,12 +237,12 @@ export default function ImportsRoute() {
               )}
             </tbody>
           </Table>
-        </Card>
+        </div>
 
         <div className="space-y-6">
-          <Card>
+          <div className="rounded-md border border-border">
             <CardHeader title="Parse a document" description="Text, not the image" />
-            <Form method="post" className="space-y-3 p-4">
+            <Form method="post" className="space-y-2 p-3">
               <input type="hidden" name="intent" value="parse" />
               <Field label="Label">
                 <Input name="label" placeholder="Wickman invoice 103935" />
@@ -270,9 +270,9 @@ export default function ImportsRoute() {
                 {navigation.state === 'submitting' ? 'Parsing…' : 'Parse and stage'}
               </Button>
             </Form>
-          </Card>
+          </div>
 
-          <Card>
+          <div className="rounded-md border border-border">
             <CardHeader title="Recent batches" />
             <Table>
               <thead>
@@ -295,7 +295,7 @@ export default function ImportsRoute() {
                         </span>
                       </Td>
                       <Td>
-                        <Badge tone={statusTone(batch.status)}>{batch.status}</Badge>
+                        <Status tone={statusTone(batch.status)}>{batch.status}</Status>
                       </Td>
                       <Td className="tabular text-right">
                         {batch.committedCount}/{batch.rowCount}
@@ -305,7 +305,7 @@ export default function ImportsRoute() {
                 )}
               </tbody>
             </Table>
-          </Card>
+          </div>
         </div>
       </div>
     </>

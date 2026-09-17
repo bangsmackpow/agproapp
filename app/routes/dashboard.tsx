@@ -1,7 +1,7 @@
-import { useLoaderData } from 'react-router';
+import { Link, useLoaderData } from 'react-router';
 import type { LoaderFunctionArgs } from 'react-router';
 
-import { Badge, Card, CardHeader, EmptyRow, PageHeader, Stat, Table, Td, Th, statusTone } from '../components/ui';
+import { CardHeader, EmptyRow, PageHeader, Stat, Status, Table, Td, Th, statusTone } from '../components/ui';
 import { api, getEnv, requireUser } from '../lib/api.server';
 import { canAccessCheckwriting } from '../../src/shared/rbac';
 import { formatCents, formatDate } from '../lib/utils';
@@ -61,7 +61,7 @@ export default function DashboardRoute() {
         description="A snapshot of where the season stands."
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Customers" value={String(totals.customers)} />
         <Stat label="Catalogue items" value={String(totals.products)} />
         <Stat label="Draft invoices" value={String(totals.drafts)} hint="Not yet submitted" />
@@ -72,72 +72,65 @@ export default function DashboardRoute() {
         />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader title="Recent invoices" description="Newest first" />
-          <Table>
-            <thead>
-              <tr>
-                <Th>Number</Th>
-                <Th>Customer</Th>
-                <Th>Issued</Th>
-                <Th className="text-right">Total</Th>
-                <Th className="text-right">Balance</Th>
-                <Th>Status</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {recent.length === 0 ? (
-                <EmptyRow colSpan={6} message="No invoices yet." />
-              ) : (
-                recent.map((invoice) => (
-                  <tr key={invoice.id}>
-                    <Td>
-                      <a className="text-brand-700 underline" href={`/invoices/${invoice.id}`}>
-                        {invoice.invoiceNumber}
-                      </a>
-                    </Td>
-                    <Td>{invoice.customerName}</Td>
-                    <Td>{formatDate(invoice.issueDate)}</Td>
-                    <Td className="tabular text-right">{formatCents(invoice.totalCents)}</Td>
-                    <Td className="tabular text-right">{formatCents(invoice.balanceCents)}</Td>
-                    <Td>
-                      <Badge tone={statusTone(invoice.status)}>{invoice.status}</Badge>
-                    </Td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </Table>
-        </Card>
+      {/* Three facts, so a strip rather than a panel. A card holding three lines
+          of text is mostly padding. */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-ink-muted">
+        <span>
+          Role <span className="font-medium text-ink capitalize">{user.role}</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          Checkwriting
+          <Status tone={showChecks ? 'success' : 'danger'}>
+            {showChecks ? 'Available' : 'Admin only'}
+          </Status>
+        </span>
+        <span className="flex items-center gap-1.5">
+          Inventory
+          <Status tone={user.role === 'sales' ? 'warning' : 'success'}>
+            {user.role === 'sales' ? 'Read-only' : 'Read and write'}
+          </Status>
+        </span>
+      </div>
 
-        <Card>
-          <CardHeader title="Your access" description="What this account can do" />
-          <dl className="space-y-3 p-4 text-sm">
-            <div>
-              <dt className="text-ink-muted">Role</dt>
-              <dd className="font-medium text-ink capitalize">{user.role}</dd>
-            </div>
-            <div>
-              <dt className="text-ink-muted">Checkwriting</dt>
-              <dd className="mt-1">
-                {showChecks ? (
-                  <Badge tone="success">Available</Badge>
-                ) : (
-                  <Badge tone="danger">Admin only</Badge>
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-ink-muted">Inventory</dt>
-              <dd className="mt-1">
-                <Badge tone={user.role === 'sales' ? 'warning' : 'success'}>
-                  {user.role === 'sales' ? 'Read-only' : 'Read and write'}
-                </Badge>
-              </dd>
-            </div>
-          </dl>
-        </Card>
+      <div className="mt-4 rounded-md border border-border">
+        <CardHeader title="Recent invoices" description="Newest first" />
+        <Table>
+          <thead>
+            <tr>
+              <Th>Number</Th>
+              <Th>Customer</Th>
+              <Th>Issued</Th>
+              <Th className="text-right">Total</Th>
+              <Th className="text-right">Balance</Th>
+              <Th>Status</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {recent.length === 0 ? (
+              <EmptyRow colSpan={6} message="No invoices yet." />
+            ) : (
+              recent.map((invoice) => (
+                <tr key={invoice.id} className="hover:bg-muted/40">
+                  <Td>
+                    <Link
+                      to={`/invoices/${invoice.id}`}
+                      className="tabular font-medium text-brand-700 hover:underline"
+                    >
+                      {invoice.invoiceNumber}
+                    </Link>
+                  </Td>
+                  <Td>{invoice.customerName}</Td>
+                  <Td className="tabular text-ink-muted">{formatDate(invoice.issueDate)}</Td>
+                  <Td className="tabular text-right">{formatCents(invoice.totalCents)}</Td>
+                  <Td className="tabular text-right">{formatCents(invoice.balanceCents)}</Td>
+                  <Td>
+                    <Status tone={statusTone(invoice.status)}>{invoice.status}</Status>
+                  </Td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </Table>
       </div>
     </>
   );

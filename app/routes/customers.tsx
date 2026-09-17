@@ -1,16 +1,12 @@
-import { Form, useActionData, useLoaderData, useNavigation, useSearchParams } from 'react-router';
-import type { ActionFunctionArgs, LoaderFunctionArgs } from 'react-router';
+import { Form, Link, useLoaderData, useSearchParams } from 'react-router';
+import type { LoaderFunctionArgs } from 'react-router';
 
 import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  CardHeader,
   EmptyRow,
-  Field,
-  Input,
   PageHeader,
+  Pagination,
+  SortLink,
+  Status,
   Table,
   Td,
   Th,
@@ -36,51 +32,53 @@ interface ListEnvelope<T> {
   pagination: { total: number };
 }
 
+const PAGE_SIZE = 50;
+
+/**
+ * The account list.
+ *
+ * Scoped to scanning. Creating a customer and editing one both live on their own
+ * screens, so this route has no mutation action at all — the CRM holds far more
+ * fields than a list can justify showing.
+ */
 export async function loader({ request, context }: LoaderFunctionArgs) {
   const env = getEnv(context);
   const user = await requireUser(env, request);
 
-  const q = new URL(request.url).searchParams.get('q') ?? '';
-  const query = q ? `&q=${encodeURIComponent(q)}` : '';
+  const url = new URL(request.url);
+  const q = url.searchParams.get('q') ?? '';
+  const sort = url.searchParams.get('sort') ?? 'name';
+  const direction = url.searchParams.get('direction') ?? 'asc';
+  const offset = Number(url.searchParams.get('offset') ?? 0) || 0;
 
-  const customers = await api<ListEnvelope<CustomerRow>>(env, request, `/customers?limit=100${query}`);
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(offset),
+    sort,
+    direction,
+  });
+  if (q) params.set('q', q);
+
+  const customers = await api<ListEnvelope<CustomerRow>>(env, request, `/customers?${params}`);
 
   return {
     customers: customers.data,
     total: customers.pagination.total,
     q,
+    sort,
+    direction,
+    offset,
+    pageSize: PAGE_SIZE,
+    search: url.search,
     canWrite: can(user.role, 'crm:write'),
   };
 }
 
-export async function action({ request, context }: ActionFunctionArgs) {
-  const env = getEnv(context);
-  const form = await request.formData();
-
-  const payload = {
-    accountNumber: String(form.get('accountNumber') ?? '').trim(),
-    name: String(form.get('name') ?? '').trim(),
-    contactName: String(form.get('contactName') ?? '').trim() || undefined,
-    phone: String(form.get('phone') ?? '').trim() || undefined,
-    email: String(form.get('email') ?? '').trim() || undefined,
-    billCity: String(form.get('billCity') ?? '').trim() || undefined,
-    billState: String(form.get('billState') ?? '').trim() || undefined,
-    pesticideLicenseNumber: String(form.get('pesticideLicenseNumber') ?? '').trim() || undefined,
-  };
-
-  try {
-    await api(env, request, '/customers', { method: 'POST', body: JSON.stringify(payload) });
-    return { created: payload.name };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : 'Could not create the customer.' };
-  }
-}
-
 export default function CustomersRoute() {
-  const { customers, total, q, canWrite } = useLoaderData<typeof loader>();
-  const result = useActionData<typeof action>();
+  const { customers, total, sort, direction, offset, pageSize, search, canWrite } =
+    useLoaderData<typeof loader>();
   const [params] = useSearchParams();
-  const navigation = useNavigation();
+  const q = params.get('q') ?? '';
 
   return (
     <>
@@ -88,120 +86,120 @@ export default function CustomersRoute() {
         title="Customers"
         description={`${total} account${total === 1 ? '' : 's'} on file`}
         actions={
-          <Form method="get" className="flex items-end gap-2">
-            <Input
-              name="q"
-              defaultValue={params.get('q') ?? ''}
-              placeholder="Search name, account or phone"
-              aria-label="Search customers"
-            />
-            <Button type="submit" variant="secondary">
-              Search
-            </Button>
-          </Form>
+          canWrite ? (
+            <Link
+              to="/customers/new"
+              className="inline-flex h-8 items-center rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-600"
+            >
+              New customer
+            </Link>
+          ) : (
+            <span className="text-xs text-ink-muted">Read-only</span>
+          )
         }
       />
 
-      {result?.created ? (
-        <div className="mb-4">
-          <Alert tone="info" title={`Created ${result.created}.`} />
-        </div>
-      ) : null}
-      {result?.error ? (
-        <div className="mb-4">
-          <Alert title={result.error} />
-        </div>
-      ) : null}
-      {q ? (
-        <p className="mb-4 text-sm text-ink-muted">
-          Showing results for “{q}”. <a className="underline" href="/customers">Clear</a>
-        </p>
-      ) : null}
-
-      <div className="grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader title="Accounts" description="Purchase history lives on each account" />
-          <Table>
-            <thead>
-              <tr>
-                <Th>Account</Th>
-                <Th>Name</Th>
-                <Th>Location</Th>
-                <Th>Phone</Th>
-                <Th>Pesticide licence</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {customers.length === 0 ? (
-                <EmptyRow colSpan={5} message="No customers match." />
-              ) : (
-                customers.map((customer) => (
-                  <tr key={customer.id}>
-                    <Td className="font-medium">{customer.accountNumber}</Td>
-                    <Td>
-                      {customer.name}
-                      {customer.isActive ? null : (
-                        <span className="ml-2">
-                          <Badge tone="danger">Inactive</Badge>
-                        </span>
-                      )}
-                    </Td>
-                    <Td>
-                      {[customer.billCity, customer.billState].filter(Boolean).join(', ') || '—'}
-                    </Td>
-                    <Td>{customer.phone ?? '—'}</Td>
-                    <Td>
-                      {customer.pesticideLicenseNumber ? (
-                        <span className="tabular">{customer.pesticideLicenseNumber}</span>
-                      ) : (
-                        <Badge tone="warning">Not on file</Badge>
-                      )}
-                    </Td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </Table>
-        </Card>
-
-        {canWrite ? (
-          <Card>
-            <CardHeader title="Add a customer" />
-            <Form method="post" className="space-y-3 p-4">
-              <Field label="Account number">
-                <Input name="accountNumber" required placeholder="AGP-003" />
-              </Field>
-              <Field label="Name">
-                <Input name="name" required placeholder="Prairie Ridge Farms" />
-              </Field>
-              <Field label="Contact">
-                <Input name="contactName" placeholder="Optional" />
-              </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Phone">
-                  <Input name="phone" placeholder="641-555-0100" />
-                </Field>
-                <Field label="City">
-                  <Input name="billCity" placeholder="Creston" />
-                </Field>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="State">
-                  <Input name="billState" maxLength={2} placeholder="IA" />
-                </Field>
-                <Field
-                  label="Pesticide licence"
-                  hint="Required at time of sale for carry tiers"
-                >
-                  <Input name="pesticideLicenseNumber" />
-                </Field>
-              </div>
-              <Button type="submit" disabled={navigation.state === 'submitting'}>
-                {navigation.state === 'submitting' ? 'Saving…' : 'Create customer'}
-              </Button>
-            </Form>
-          </Card>
+      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+        {q ? (
+          <p className="text-sm text-ink-muted">
+            Results for “{q}”.{' '}
+            <a className="text-brand-700 underline" href="/customers">
+              Clear
+            </a>
+          </p>
         ) : null}
+
+        <Form method="get" className="ml-auto flex items-center gap-1.5">
+          <input
+            name="q"
+            defaultValue={q}
+            placeholder="Search name, account or phone"
+            aria-label="Search customers"
+            className="h-7 w-56 rounded-md border border-border bg-white px-2 text-sm placeholder:text-ink-muted focus:border-brand-600 focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="h-7 rounded-md border border-border px-2 text-sm text-ink hover:bg-muted"
+          >
+            Search
+          </button>
+        </Form>
+      </div>
+
+      <div className="rounded-md border border-border">
+        <Table>
+          <thead>
+            <tr>
+              <SortLink
+                basePath="/customers"
+                current={search}
+                field="accountNumber"
+                active={sort === 'accountNumber'}
+                direction={direction}
+              >
+                Account
+              </SortLink>
+              <SortLink
+                basePath="/customers"
+                current={search}
+                field="name"
+                active={sort === 'name'}
+                direction={direction}
+              >
+                Name
+              </SortLink>
+              <Th>Location</Th>
+              <Th>Phone</Th>
+              <Th>Pesticide licence</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {customers.length === 0 ? (
+              <EmptyRow colSpan={5} message="No customers match." />
+            ) : (
+              customers.map((customer) => (
+                <tr key={customer.id} className="hover:bg-muted/40">
+                  <Td className="tabular text-ink-muted">{customer.accountNumber}</Td>
+                  <Td>
+                    <Link
+                      to={`/customers/${customer.id}`}
+                      className="font-medium text-brand-700 hover:underline"
+                    >
+                      {customer.name}
+                    </Link>
+                    {customer.isActive ? null : (
+                      <span className="ml-2 inline-block align-middle">
+                        <Status tone="danger">Inactive</Status>
+                      </span>
+                    )}
+                  </Td>
+                  <Td>
+                    {[customer.billCity, customer.billState].filter(Boolean).join(', ') || (
+                      <span className="text-ink-muted">—</span>
+                    )}
+                  </Td>
+                  <Td className="tabular">
+                    {customer.phone ?? <span className="text-ink-muted">—</span>}
+                  </Td>
+                  <Td>
+                    {customer.pesticideLicenseNumber ? (
+                      <span className="tabular">{customer.pesticideLicenseNumber}</span>
+                    ) : (
+                      <span className="text-ink-muted">Not on file</span>
+                    )}
+                  </Td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </Table>
+        <Pagination
+          basePath="/customers"
+          current={search}
+          total={total}
+          limit={pageSize}
+          offset={offset}
+        />
       </div>
     </>
   );
