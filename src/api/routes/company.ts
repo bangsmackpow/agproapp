@@ -8,7 +8,7 @@ import { resolveCheckTemplate } from '../../shared/check-template';
 import { conflict, parseJson } from '../lib/http';
 import { requireAuth, requirePermission } from '../middleware';
 import { companySettingsUpdateSchema } from '../schemas';
-import { recordAudit } from '../../services/audit';
+import { recordChange } from '../../services/audit';
 
 /**
  * Company identity, as it appears on printed invoices and cheques.
@@ -59,14 +59,15 @@ companyRoutes.patch('/', requirePermission('admin:settings'), async (c) => {
 
   if (!updated) throw conflict('Failed to update company settings');
 
-  await recordAudit(db, {
+  const changes = await recordChange(db, {
     actorUserId: actor.id,
     action: 'company_settings.updated',
     entityType: 'company_settings',
     entityId: updated.id,
-    metadata: { fields: Object.keys(input) },
+    before: current,
+    after: updated,
     ipAddress: c.req.header('cf-connecting-ip') ?? null,
   });
 
-  return c.json({ data: updated });
+  return c.json({ data: updated, changes });
 });

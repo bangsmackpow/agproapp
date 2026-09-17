@@ -1,6 +1,8 @@
 import { Form, Link, useActionData, useLoaderData, useNavigation } from 'react-router';
 import type { ActionFunctionArgs, LoaderFunctionArgs } from 'react-router';
 
+import { ConfirmButton } from '../components/confirm';
+
 import {
   Alert,
   Badge,
@@ -267,14 +269,21 @@ export default function ChecksRoute() {
                           <Form method="post">
                             <input type="hidden" name="intent" value="void" />
                             <input type="hidden" name="checkId" value={check.id} />
-                            <Button
-                              type="submit"
+                            <ConfirmButton
                               size="sm"
-                              variant="ghost"
+                              title={`Void check #${check.checkNumber}?`}
+                              description={
+                                <>
+                                  This reverses the {formatCents(check.amountCents)} allocation and
+                                  restores any vendor bill balances it touched. The check number is
+                                  retired, not reused.
+                                </>
+                              }
+                              confirmLabel="Void check"
                               disabled={navigation.state === 'submitting'}
                             >
                               Void
-                            </Button>
+                            </ConfirmButton>
                           </Form>
                         ) : null}
                       </div>

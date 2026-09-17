@@ -24,7 +24,7 @@ import {
   productListQuerySchema,
   productUpdateSchema,
 } from '../schemas';
-import { recordAudit } from '../../services/audit';
+import { recordAudit, recordChange } from '../../services/audit';
 import { listActiveTiers } from '../../services/pricing';
 
 export const catalogRoutes = new Hono<AppEnv>();
@@ -173,25 +173,32 @@ catalogRoutes.patch('/products/:id', requirePermission('inventory:write'), async
   const input = await parseJson(c.req.raw, productUpdateSchema);
   const db = createDb(c.env.DB);
   const actor = c.get('user');
+  const id = c.req.param('id');
+
+  // Read before writing: the audit trail is only useful if it can say what the
+  // value used to be.
+  const before = await db.select().from(products).where(eq(products.id, id)).get();
+  if (!before) throw notFound('Product not found');
 
   const [updated] = await db
     .update(products)
     .set({ ...input, updatedAt: new Date() })
-    .where(eq(products.id, c.req.param('id')))
+    .where(eq(products.id, id))
     .returning();
 
   if (!updated) throw notFound('Product not found');
 
-  await recordAudit(db, {
+  const changes = await recordChange(db, {
     actorUserId: actor.id,
     action: 'product.updated',
     entityType: 'product',
     entityId: updated.id,
-    metadata: { fields: Object.keys(input) },
+    before,
+    after: updated,
     ipAddress: c.req.header('cf-connecting-ip') ?? null,
   });
 
-  return c.json({ data: updated });
+  return c.json({ data: updated, changes });
 });
 
 /* ── Inventory lots ───────────────────────────────────────────────────────── */

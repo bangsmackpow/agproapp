@@ -8,7 +8,7 @@ import type { AppEnv } from '../../env';
 import { conflict, notFound, parseJson, parseQuery } from '../lib/http';
 import { requireAuth, requirePermission } from '../middleware';
 import { customerCreateSchema, customerUpdateSchema, listQuerySchema } from '../schemas';
-import { recordAudit } from '../../services/audit';
+import { recordAudit, recordChange } from '../../services/audit';
 
 export const customerRoutes = new Hono<AppEnv>();
 
@@ -95,6 +95,9 @@ customerRoutes.patch('/:id', requirePermission('crm:write'), async (c) => {
   const db = createDb(c.env.DB);
   const actor = c.get('user');
 
+  const before = await db.select().from(customers).where(eq(customers.id, id)).get();
+  if (!before) throw notFound('Customer not found');
+
   try {
     const [updated] = await db
       .update(customers)
@@ -104,16 +107,17 @@ customerRoutes.patch('/:id', requirePermission('crm:write'), async (c) => {
 
     if (!updated) throw notFound('Customer not found');
 
-    await recordAudit(db, {
+    const changes = await recordChange(db, {
       actorUserId: actor.id,
       action: 'customer.updated',
       entityType: 'customer',
       entityId: updated.id,
-      metadata: { fields: Object.keys(input) },
+      before,
+      after: updated,
       ipAddress: c.req.header('cf-connecting-ip') ?? null,
     });
 
-    return c.json({ data: updated });
+    return c.json({ data: updated, changes });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw conflict('That account number is already in use');

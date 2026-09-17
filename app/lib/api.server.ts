@@ -122,8 +122,46 @@ export interface SessionUser {
   phone: string | null;
 }
 
-/** Resolves the session, or null when nobody is signed in. */
-export async function getSessionUser(env: Env, request: Request): Promise<SessionUser | null> {
+/**
+ * Maps a validation failure onto the fields that caused it.
+ *
+ * The API returns Zod issues as `{ path, message }`, so a bad EPA number can
+ * highlight the EPA input instead of producing one generic banner. Path segments
+ * are joined with dots, matching how nested form inputs are named.
+ */
+export function toFieldErrors(error: unknown): Record<string, string> {
+  if (!(error instanceof ApiError) || !Array.isArray(error.details)) return {};
+
+  const errors: Record<string, string> = {};
+
+  for (const issue of error.details as unknown[]) {
+    if (!issue || typeof issue !== 'object') continue;
+    const { path, message } = issue as { path?: unknown; message?: unknown };
+    if (typeof message !== 'string') continue;
+
+    const key = path === undefined || path === null ? '' : String(path);
+    if (key) errors[key] = message;
+  }
+
+  return errors;
+}
+
+/** Shape every action returns so screens can render errors uniformly. */
+export interface ActionFailure {
+  error: string;
+  fieldErrors?: Record<string, string>;
+}
+
+/** Builds an action failure, carrying field-level detail when there is any. */
+export function actionFailure(error: unknown, fallback: string): ActionFailure {
+  const fieldErrors = toFieldErrors(error);
+  return {
+    error: error instanceof Error ? error.message : fallback,
+    ...(Object.keys(fieldErrors).length > 0 ? { fieldErrors } : {}),
+  };
+}
+
+/** Resolves the session, or null when nobody is signed in. */export async function getSessionUser(env: Env, request: Request): Promise<SessionUser | null> {
   const response = await rawApi(env, request, '/auth/me');
   if (!response.ok) return null;
 
