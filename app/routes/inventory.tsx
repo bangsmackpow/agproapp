@@ -5,6 +5,7 @@ import { Alert, Badge, Card, CardHeader, EmptyRow, PageHeader, Table, Td, Th } f
 import { ConfirmButton } from '../components/confirm';
 import { ProductForm, type UnitOption } from '../components/product-form';
 import { actionFailure, api, getEnv, requireUser } from '../lib/api.server';
+import { parseProductForm } from '../lib/product-payload.server';
 import { can } from '../../src/shared/rbac';
 import { PRODUCT_TYPES } from '../../src/shared/enums';
 import { formatCents, formatNumber } from '../lib/utils';
@@ -86,63 +87,13 @@ export async function action({ request, context }: ActionFunctionArgs): Promise<
   const form = await request.formData();
   const intent = String(form.get('intent') ?? '');
 
-  const text = (name: string): string | undefined => {
-    const raw = form.get(name);
-    const value = raw === null ? '' : String(raw).trim();
-    return value === '' ? undefined : value;
-  };
-  const number = (name: string): number | undefined => {
-    const value = text(name);
-    if (value === undefined) return undefined;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  };
-  const money = (name: string): number | undefined => {
-    const value = number(name);
-    return value === undefined ? undefined : Math.round(value * 100);
-  };
-  const flag = (name: string) => form.get(name) === 'on';
-
   try {
     if (intent === 'create' || intent === 'update') {
-      const payload: Record<string, unknown> = {
-        sku: text('sku'),
-        name: text('name'),
-        type: text('type'),
-        brand: text('brand'),
-        manufacturer: text('manufacturer'),
-        unit: text('unit'),
-        baseUnitCode: text('baseUnitCode'),
-        packageSize: text('packageSize'),
-        category: text('category'),
-        epaNumber: text('epaNumber'),
-        pesticideType: text('pesticideType'),
-        activeIngredient: text('activeIngredient'),
-        density: number('density'),
-        stateRestrictions: (text('stateRestrictions') ?? '')
-          .split(',')
-          .map((code) => code.trim().toUpperCase())
-          .filter((code) => code.length === 2),
-        isRegulatedSeed: flag('isRegulatedSeed'),
-        seedTraitSystem: text('seedTraitSystem'),
-        isSerialized: flag('isSerialized'),
-        defaultCostCents: money('defaultCost'),
-        markupPercent: number('markupPercent'),
-        financedAppPriceCents: money('financedAppPrice'),
-        cashAppPriceCents: money('cashAppPrice'),
-        carryPriceCents: money('carryPrice'),
-        taxable: flag('taxable'),
-        notes: text('notes'),
-      };
-
-      // Drop blanks so an update does not wipe a field the form did not carry.
-      const cleaned = Object.fromEntries(
-        Object.entries(payload).filter(([, value]) => value !== undefined),
-      );
+      const cleaned = parseProductForm(form);
 
       if (intent === 'create') {
         await api(env, request, '/products', { method: 'POST', body: JSON.stringify(cleaned) });
-        return { ok: `Created ${payload.name}.` };
+        return { ok: `Created ${cleaned.name}.` };
       }
 
       const id = String(form.get('productId') ?? '');
@@ -153,7 +104,7 @@ export async function action({ request, context }: ActionFunctionArgs): Promise<
 
       const changed = Object.keys(result.changes ?? {}).length;
       return {
-        ok: changed === 0 ? 'Saved, but nothing had changed.' : `Updated ${payload.name}.`,
+        ok: changed === 0 ? 'Saved, but nothing had changed.' : `Updated ${cleaned.name}.`,
       };
     }
 

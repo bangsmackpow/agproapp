@@ -17,6 +17,8 @@ import {
   statusTone,
 } from '../components/ui';
 import { actionFailure, api, getEnv, requireUser } from '../lib/api.server';
+import { parseProductForm } from '../lib/product-payload.server';
+import { ProductForm, type UnitOption } from '../components/product-form';
 import { can } from '../../src/shared/rbac';
 import { formatCents, formatDate, formatNumber } from '../lib/utils';
 
@@ -78,17 +80,24 @@ export async function loader({ request, context, params }: LoaderFunctionArgs) {
   const env = getEnv(context);
   const user = await requireUser(env, request);
 
-  const [stock, product] = await Promise.all([
+  const [stock, product, units] = await Promise.all([
     api<{ data: Stock }>(env, request, `/products/${params.id}/stock`),
     api<{ data: Product }>(env, request, `/products/${params.id}`),
+    api<{ data: UnitOption[] }>(env, request, '/units'),
   ]);
 
-  return { stock: stock.data, product: product.data, canWrite: can(user.role, 'inventory:write') };
+  return {
+    stock: stock.data,
+    product: product.data,
+    units: units.data,
+    canWrite: can(user.role, 'inventory:write'),
+  };
 }
 
 interface ActionResult {
   ok?: string;
   error?: string;
+  fieldErrors?: Record<string, string>;
 }
 
 export async function action({ request, context, params }: ActionFunctionArgs): Promise<ActionResult> {
@@ -142,6 +151,19 @@ export async function action({ request, context, params }: ActionFunctionArgs): 
       return { ok: 'Adjustment recorded.' };
     }
 
+    if (intent === 'update') {
+      const payload = parseProductForm(form);
+      const result = await api<{ changes?: Record<string, unknown> }>(env, request, `/products/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+
+      const changed = Object.keys(result.changes ?? {}).length;
+      return {
+        ok: changed === 0 ? 'Saved, but nothing had changed.' : `Updated ${payload.name ?? 'product'}.`,
+      };
+    }
+
     return { error: 'Unknown action.' };
   } catch (error) {
     return actionFailure(error, 'That action failed.');
@@ -149,7 +171,7 @@ export async function action({ request, context, params }: ActionFunctionArgs): 
 }
 
 export default function ProductDetailRoute() {
-  const { stock, product, canWrite } = useLoaderData<typeof loader>();
+  const { stock, product, units, canWrite } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const navigation = useNavigation();
 
@@ -385,6 +407,32 @@ export default function ProductDetailRoute() {
           </p>
         </Card>
       </div>
+
+      {canWrite ? (
+        <Card className="mt-6">
+          <CardHeader
+            title="Edit product"
+            description="Changes are recorded in the audit trail with their previous values."
+          />
+          <ProductForm
+            units={units}
+            submitLabel="Save changes"
+            errors={result?.fieldErrors}
+            product={{
+              id: product.id,
+              sku: product.sku,
+              name: product.name,
+              type: product.type,
+              unit: product.unit,
+              baseUnitCode: product.baseUnitCode,
+              epaNumber: product.epaNumber,
+              isRegulatedSeed: product.isRegulatedSeed,
+              defaultCostCents: product.defaultCostCents,
+              markupPercent: product.markupPercent,
+            }}
+          />
+        </Card>
+      ) : null}
     </>
   );
 }
