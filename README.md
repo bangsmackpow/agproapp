@@ -181,6 +181,19 @@ The original specification described three tiers; both source worksheets price f
 
 Once seeded, the `price_tiers` table is the source of truth — an Admin can adjust multipliers or add tiers without a code change, so application code must read multipliers from the table and treat the constants as seed data only.
 
+### One unit per product; stock pools in it
+
+`products.unit` is how an item is counted, and it is the only unit the form asks for. Stock pools in that unit, so every quantity — a carry sale, a receipt, an application draw-down — converts into it before being summed, which is what makes a running total meaningful.
+
+`products.baseUnitCode` still exists and still wins when set, but nothing sets it: the form does not expose it, so it falls back to `unit` everywhere (`product.baseUnitCode ?? product.unit`). It was removed from the form because it asked a question with no obvious answer.
+
+**The case that would bring it back.** Carry and application draw on the same pool in different sizes:
+
+- *Carry* sells the container whole — "1 gallon, as it came in". You cannot break it down.
+- *Application* meters by acreage — 32 oz/acre over 160 acres is 5,120 oz, or 40 gal.
+
+That already works, because `oz` and `gal` are both volume and convert through the units registry. It stops working when the stocking unit is a **count** and consumption is a **volume** — a chemical bought by the jug but sprayed by the ounce. `bottle → oz` is a cross-dimension conversion and is correctly refused, because nothing knows how many ounces a jug holds. That product needs `baseUnitCode` set to the volume unit *and* a per-container size, which is what the unused `packageSize` column was for. No product is in that shape today.
+
 ### Seed compliance is a gate, not a field
 
 `iowa_compliance_logs` captures the two tokens the State of Iowa requires from a Channel straight bill of lading — `bol_cmr_number` and `order_number` — alongside seed number, shipper number, PO number, and lot. A unique index over `(bol_cmr_number, order_number, lot_number)` prevents duplicate audit records while still tolerating partially-completed drafts. An invoice covering regulated seed cannot be submitted until its compliance tokens are verified.
