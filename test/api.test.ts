@@ -7,6 +7,7 @@ import { createDb } from '../src/db';
 import { isUniqueConstraintError } from '../src/db/errors';
 import {
   applicationFees,
+  applicationPrograms,
   bankAccounts,
   companySettings,
   customers,
@@ -18,6 +19,8 @@ import {
   loginAttempts,
   priceTiers,
   products,
+  programIngredients,
+  programPrices,
   users,
 } from '../src/db/schema';
 import { PRICE_TIER_KEYS } from '../src/shared/enums';
@@ -39,6 +42,9 @@ const SEED_PRODUCT_ID = '55555555-5555-4555-8555-555555555555';
 const MISC_PRODUCT_ID = '55555555-5555-4555-8555-555555555556';
 /** Dedicated stock-tracked product, so pool assertions are not disturbed by other tests. */
 const STOCK_PRODUCT_ID = '55555555-5555-4555-8555-555555555557';
+/** Ingredient of the test blend, tracked separately so the blend maths is isolated. */
+const BLEND_INGREDIENT_ID = '55555555-5555-4555-8555-555555555558';
+const TEST_PROGRAM_ID = '88888888-8888-4888-8888-888888888888';
 const BANK_ACCOUNT_ID = '66666666-6666-4666-8666-666666666666';
 
 function cookieFrom(response: Response): string {
@@ -161,6 +167,73 @@ beforeAll(async () => {
     referenceType: 'manual',
     occurredAt: new Date('2026-06-01T00:00:00Z'),
   });
+
+  /*
+   * A program (blend) with one ingredient, so selling the blend can be shown to
+   * draw down the chemical it is made of rather than consuming nothing.
+   */
+  await db.insert(products).values({
+    id: BLEND_INGREDIENT_ID,
+    sku: 'CHEM-BLENDINGREDIENT',
+    name: 'Blend Ingredient',
+    type: 'chemical',
+    unit: 'oz',
+    baseUnitCode: 'oz',
+  });
+
+  await db.insert(inventoryLots).values({
+    id: '77777777-7777-4777-8777-777777777778',
+    productId: BLEND_INGREDIENT_ID,
+    lotNumber: 'LOT-B',
+    quantityOnHand: 1000,
+    unitCostCents: 100,
+    receivedAt: new Date('2026-06-01T00:00:00Z'),
+  });
+
+  await db.insert(inventoryMovements).values({
+    productId: BLEND_INGREDIENT_ID,
+    lotId: '77777777-7777-4777-8777-777777777778',
+    movementType: 'receipt',
+    quantityDelta: 1000,
+    unit: 'oz',
+    quantityInBase: 1000,
+    unitCostCents: 100,
+    referenceType: 'manual',
+    occurredAt: new Date('2026-06-01T00:00:00Z'),
+  });
+
+  await db.insert(applicationPrograms).values({
+    id: TEST_PROGRAM_ID,
+    name: 'Test Blend',
+    crop: 'corn',
+    stage: 'single',
+    seasonYear: 2027,
+  });
+
+  await db.insert(programIngredients).values({
+    programId: TEST_PROGRAM_ID,
+    productId: BLEND_INGREDIENT_ID,
+    productNameRaw: 'Blend Ingredient',
+    ratePerAcre: 32,
+    rateUnit: 'oz',
+    costPerAcreCents: 3200,
+  });
+
+  const cashAppTier = await db
+    .select()
+    .from(priceTiers)
+    .where(eq(priceTiers.key, 'cash_app'))
+    .get();
+
+  if (cashAppTier) {
+    await db.insert(programPrices).values({
+      programId: TEST_PROGRAM_ID,
+      tierId: cashAppTier.id,
+      pricePerAcreCents: 4500,
+      costPerAcreCents: 3200,
+      effectiveFrom: new Date('2026-01-01T00:00:00Z'),
+    });
+  }
 
   await db.insert(bankAccounts).values({
     id: BANK_ACCOUNT_ID,
@@ -606,6 +679,41 @@ describe('stock ledger', () => {
     // The sale happened, so the pool says -5. A person needs to see that, not have
     // it rounded to zero.
     expect(await productPoolQuantity(db, STOCK_PRODUCT_ID)).toBe(-5);
+  });
+});
+
+describe('blend consumption', () => {
+  it('draws down the ingredients of a program, in proportion to the acreage', async () => {
+    const db = createDb(env.DB);
+
+    expect(await productPoolQuantity(db, BLEND_INGREDIENT_ID)).toBe(1000);
+
+    const created = await api('/api/invoices', {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({
+        customerId: CUSTOMER_ID,
+        pricingTierKey: 'cash_app',
+        items: [
+          {
+            lineType: 'program',
+            programId: TEST_PROGRAM_ID,
+            description: 'Test Blend',
+            acres: 10,
+          },
+        ],
+      }),
+    });
+
+    expect(created.status).toBe(201);
+    const invoiceId = ((await created.json()) as { data: { id: string } }).data.id;
+
+    const sent = await api(`/api/invoices/${invoiceId}/send`, { method: 'POST', cookie: salesCookie });
+    expect(sent.status).toBe(200);
+
+    // 32 oz/acre over 10 acres is 320 oz, drawn from the 1000 on hand. Consuming
+    // "the program" would have moved nothing at all, since a blend holds no stock.
+    expect(await productPoolQuantity(db, BLEND_INGREDIENT_ID)).toBe(680);
   });
 });
 

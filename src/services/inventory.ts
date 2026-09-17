@@ -7,6 +7,7 @@ import {
   inventoryMovements,
   invoices,
   products,
+  programIngredients,
   units,
   type InventoryMovement,
   type NewInventoryMovement,
@@ -146,6 +147,7 @@ export async function poolQuantitiesByProduct(db: Database): Promise<Map<string,
 export async function receiptsWithRemaining(
   db: Database,
   productId: string,
+  pending: readonly { lotId?: string | null; quantityInBase: number }[] = [],
 ): Promise<Receipt[]> {
   const [lots, grouped] = await Promise.all([
     db.select().from(inventoryLots).where(eq(inventoryLots.productId, productId)).all(),
@@ -163,6 +165,14 @@ export async function receiptsWithRemaining(
   const remainingByLot = new Map(
     grouped.map((row) => [row.lotId, tidyQuantity(Number(row.total))]),
   );
+
+  // Account for movements staged but not yet written, so a second line drawing on
+  // the same product sees what the first one already took.
+  for (const entry of pending) {
+    if (entry.quantityInBase === 0) continue;
+    const lotKey = entry.lotId ?? null;
+    remainingByLot.set(lotKey, tidyQuantity((remainingByLot.get(lotKey) ?? 0) + entry.quantityInBase));
+  }
 
   return lots.map((lot) => ({
     lotId: lot.id,
@@ -287,50 +297,111 @@ export async function convertToBase(
 }
 
 /**
+ * Turns invoice lines into individual product consumptions.
+ *
+ * A program is a blend, so selling one consumes its ingredients in proportion to
+ * the acreage rather than consuming "the program" — there is no such stock. This
+ * is why a program line previously moved nothing: approximating it would have put
+ * wrong numbers in the ledger, which is worse than an obvious gap.
+ */
+export async function consumptionRequests(
+  db: Database,
+  items: readonly {
+    lineType: string;
+    productId: string | null;
+    programId: string | null;
+    quantity: number;
+    unit: string | null;
+    acres: number | null;
+    description: string;
+  }[],
+): Promise<{ productId: string; quantity: number; unit: string | null; description: string }[]> {
+  const requests: {
+    productId: string;
+    quantity: number;
+    unit: string | null;
+    description: string;
+  }[] = [];
+
+  for (const item of items) {
+    if (item.lineType === 'program') {
+      const acres = item.acres ?? item.quantity;
+      if (!item.programId || !Number.isFinite(acres) || acres <= 0) continue;
+
+      const ingredients = await db
+        .select()
+        .from(programIngredients)
+        .where(eq(programIngredients.programId, item.programId))
+        .all();
+
+      for (const ingredient of ingredients) {
+        if (!ingredient.productId || ingredient.ratePerAcre === null) continue;
+
+        requests.push({
+          productId: ingredient.productId,
+          quantity: ingredient.ratePerAcre * acres,
+          unit: ingredient.rateUnit ?? null,
+          description: `${ingredient.productNameRaw ?? 'ingredient'} at ${ingredient.ratePerAcre}/acre over ${acres} acres`,
+        });
+      }
+
+      continue;
+    }
+
+    if (item.productId && item.quantity > 0) {
+      requests.push({
+        productId: item.productId,
+        quantity: item.quantity,
+        unit: item.unit,
+        description: item.description,
+      });
+    }
+  }
+
+  return requests;
+}
+
+/**
  * Consumes stock for an invoice's lines, allocating cost FIFO across receipts.
  *
- * Lines without a product — application fees, and program blends for now —
- * consume nothing here. A program is a blend of ingredients, so consuming it
- * properly means expanding it into its components, which is a separate piece of
- * work rather than something to approximate.
+ * Program lines are expanded into their ingredients first, so a blend draws down
+ * the chemicals it is actually made of.
  */
 export async function consumeForInvoice(
   db: Database,
   invoiceId: string,
   items: readonly {
-    productId: string | null;
     lineType: string;
+    productId: string | null;
+    programId: string | null;
     quantity: number;
     unit: string | null;
+    acres: number | null;
     description: string;
   }[],
   actorUserId: string | null,
   occurredAt: Date,
 ): Promise<number> {
-  const consumable = items.filter(
-    (item) => item.productId !== null && item.lineType !== 'program' && item.quantity > 0,
-  );
-  if (consumable.length === 0) return 0;
+  const requests = await consumptionRequests(db, items);
+  if (requests.length === 0) return 0;
 
   const movements: Omit<NewInventoryMovement, 'id' | 'createdAt' | 'updatedAt'>[] = [];
 
-  for (const item of consumable) {
-    const product = await db
-      .select()
-      .from(products)
-      .where(eq(products.id, item.productId as string))
-      .get();
+  for (const request of requests) {
+    const product = await db.select().from(products).where(eq(products.id, request.productId)).get();
     if (!product) continue;
 
     const baseUnit = product.baseUnitCode ?? product.unit;
     const { quantityInBase, converted } = await convertToBase(
       db,
-      item.unit ?? product.unit,
+      request.unit ?? product.unit,
       baseUnit,
-      item.quantity,
+      request.quantity,
     );
 
-    const receipts = await receiptsWithRemaining(db, product.id);
+    // Re-read receipts per request: two lines may draw on the same product, and
+    // the second must see what the first left behind.
+    const receipts = await receiptsWithRemaining(db, product.id, movements);
     const allocations = allocateFifo(receipts, quantityInBase);
 
     for (const allocation of allocations) {
@@ -346,8 +417,8 @@ export async function consumeForInvoice(
         occurredAt,
         createdByUserId: actorUserId,
         note: converted
-          ? item.description
-          : `${item.description} (unit ${item.unit ?? '?'} could not be converted to ${baseUnit})`,
+          ? request.description
+          : `${request.description} (unit ${request.unit ?? '?'} could not be converted to ${baseUnit})`,
       });
     }
   }
