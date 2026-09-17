@@ -717,6 +717,22 @@ describe('blend consumption', () => {
   });
 });
 
+describe('search limits', () => {
+  it('rejects a search term that would exceed D1 LIKE pattern limits', async () => {
+    // D1 refuses a LIKE pattern over 50 bytes, so a long term is a hard error
+    // rather than a slow query. It must be caught at the boundary.
+    const long = 'x'.repeat(120);
+
+    const response = await api(`/api/customers?q=${long}`, { cookie: salesCookie });
+    expect(response.status).toBe(422);
+  });
+
+  it('accepts a search term within the limit', async () => {
+    const response = await api('/api/customers?q=Prairie', { cookie: salesCookie });
+    expect(response.status).toBe(200);
+  });
+});
+
 describe('sign-in brute-force protection', () => {
   // Failures are counted per email (10) and per source IP (50). These tests stay
   // well inside the IP budget; if you add many more failure-driven tests, the IP

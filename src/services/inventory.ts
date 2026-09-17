@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 
 import type { Database } from '../db';
 import {
@@ -182,23 +182,42 @@ export async function receiptsWithRemaining(
   }));
 }
 
-/** The ledger for a product, oldest first, with a running balance. */
+/**
+ * The ledger for a product, oldest first, with a running balance.
+ *
+ * Bounded to the most recent `limit` movements. The balance is still correct: the
+ * opening figure is the pool minus the sum of what was fetched, so a screen shows
+ * a truthful running total without serialising a decade of history into one JSON
+ * response. Rows read are not saved by this — the aggregate still scans — but the
+ * response size and the CPU spent serialising it are.
+ */
 export async function productLedger(
   db: Database,
   productId: string,
+  limit = 500,
 ): Promise<(InventoryMovement & { balanceInBase: number })[]> {
-  const movements = await db
+  const recent = await db
     .select()
     .from(inventoryMovements)
     .where(eq(inventoryMovements.productId, productId))
-    .orderBy(inventoryMovements.occurredAt, inventoryMovements.createdAt)
+    .orderBy(desc(inventoryMovements.occurredAt), desc(inventoryMovements.createdAt))
+    .limit(limit)
     .all();
 
-  let balance = 0;
-  return movements.map((movement) => {
-    balance = tidyQuantity(balance + movement.quantityInBase);
-    return { ...movement, balanceInBase: balance };
-  });
+  if (recent.length === 0) return [];
+
+  const total = await productPoolQuantity(db, productId);
+  const recentSum = recent.reduce((sum, movement) => sum + movement.quantityInBase, 0);
+  let balance = tidyQuantity(total - recentSum);
+
+  // Walk forward from the opening balance so the running total ends at the pool.
+  return recent
+    .slice()
+    .reverse()
+    .map((movement) => {
+      balance = tidyQuantity(balance + movement.quantityInBase);
+      return { ...movement, balanceInBase: balance };
+    });
 }
 
 /** Appends movements. The ledger is append-only; corrections are new rows. */

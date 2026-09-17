@@ -119,8 +119,18 @@ export const customerUpdateSchema = customerCreateSchema.partial().extend({
   isActive: z.boolean().optional(),
 });
 
+/**
+ * Search terms are capped at 40 characters — not for tidiness.
+ *
+ * D1 rejects a `LIKE` or `GLOB` pattern longer than 50 bytes, and search wraps the
+ * term in wildcards, so a 200-character term would have been a hard error rather
+ * than a slow query. 40 + 2 wildcards leaves headroom for the "+1" case in
+ * substring searches.
+ */
+const SEARCH_TERM_MAX = 40;
+
 export const listQuerySchema = z.object({
-  q: optionalText(200),
+  q: optionalText(SEARCH_TERM_MAX),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
   includeInactive: booleanQuery(false),
