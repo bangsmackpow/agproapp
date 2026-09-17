@@ -33,6 +33,16 @@ export const UNITS = [
 ] as const;
 export type Unit = (typeof UNITS)[number];
 
+/**
+ * Physical quantity a unit measures.
+ *
+ * Conversion is only meaningful within a dimension: 128 fl oz is a gallon, but
+ * ounces to pounds requires knowing what the substance is. Crossing dimensions is
+ * refused rather than guessed.
+ */
+export const UNIT_DIMENSIONS = ['volume', 'mass', 'count', 'area'] as const;
+export type UnitDimension = (typeof UNIT_DIMENSIONS)[number];
+
 /** Crop families used by the program/price-sheet hierarchy. */
 export const CROP_TYPES = ['corn', 'bean', 'other'] as const;
 export type CropType = (typeof CROP_TYPES)[number];

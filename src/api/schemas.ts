@@ -12,6 +12,7 @@ import {
   PRICE_TIER_KEYS,
   PRODUCT_TYPES,
   UNITS,
+  UNIT_DIMENSIONS,
   USER_ROLES,
   VENDOR_BILL_STATUSES,
 } from '../shared/enums';
@@ -146,7 +147,7 @@ export const productCreateSchema = z.object({
   type: oneOf(PRODUCT_TYPES),
   brand: optionalText(80),
   manufacturer: optionalText(80),
-  unit: oneOf(UNITS).optional(),
+  unit: optionalText(20),
   packageSize: optionalText(60),
   category: optionalText(80),
 
@@ -216,6 +217,17 @@ export const droneUnitCreateSchema = z.object({
   warrantyExpiresAt: z.coerce.date().optional(),
   lotId: id().optional(),
   notes: optionalText(1000),
+});
+
+/* ── Units of measure ──────────────────────────────────────────────────────── */
+
+export const unitCreateSchema = z.object({
+  code: z.string().trim().min(1).max(12),
+  label: z.string().trim().min(1).max(60),
+  dimension: oneOf(UNIT_DIMENSIONS),
+  /** How many base units of its dimension this represents, e.g. gal = 128 fl oz. */
+  factorToBase: z.number().positive(),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
 });
 
 /* ── Company settings ──────────────────────────────────────────────────────── */

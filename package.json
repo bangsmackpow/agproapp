@@ -27,8 +27,8 @@
     "db:migrate:local": "wrangler d1 migrations apply agpro-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply agpro-db --remote",
     "db:studio": "drizzle-kit studio",
-    "db:seed:local": "wrangler d1 execute agpro-db --local --file=./seed/0001_reference.sql",
-    "db:seed:remote": "wrangler d1 execute agpro-db --remote --file=./seed/0001_reference.sql"
+    "db:seed:local": "wrangler d1 execute agpro-db --local --file=./seed/0001_reference.sql && wrangler d1 execute agpro-db --local --file=./seed/0002_units.sql",
+    "db:seed:remote": "wrangler d1 execute agpro-db --remote --file=./seed/0001_reference.sql && wrangler d1 execute agpro-db --remote --file=./seed/0002_units.sql"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

@@ -10,6 +10,7 @@ import {
   products,
   programIngredients,
   programPrices,
+  units,
 } from '../../db/schema';
 import type { AppEnv } from '../../env';
 import { conflict, notFound, parseJson, parseQuery } from '../lib/http';
@@ -23,9 +24,11 @@ import {
   productCreateSchema,
   productListQuerySchema,
   productUpdateSchema,
+  unitCreateSchema,
 } from '../schemas';
 import { recordAudit, recordChange } from '../../services/audit';
 import { listActiveTiers } from '../../services/pricing';
+import { assertKnownUnits, listUnits } from '../../services/units';
 
 export const catalogRoutes = new Hono<AppEnv>();
 
@@ -97,6 +100,41 @@ catalogRoutes.get('/programs', requirePermission('pricing:read'), async (c) => {
   });
 });
 
+/* ── Units of measure ──────────────────────────────────────────────────────── */
+
+/** Drives every unit dropdown. The registry is the source, not a hard-coded list. */
+catalogRoutes.get('/units', requirePermission('inventory:read'), async (c) => {
+  const db = createDb(c.env.DB);
+  return c.json({ data: await listUnits(db) });
+});
+
+catalogRoutes.post('/units', requirePermission('admin:settings'), async (c) => {
+  const input = await parseJson(c.req.raw, unitCreateSchema);
+  const db = createDb(c.env.DB);
+  const actor = c.get('user');
+
+  try {
+    const [created] = await db.insert(units).values(input).returning();
+    if (!created) throw conflict('Failed to create unit');
+
+    await recordAudit(db, {
+      actorUserId: actor.id,
+      action: 'unit.created',
+      entityType: 'unit',
+      entityId: created.code,
+      metadata: { code: created.code, dimension: created.dimension },
+      ipAddress: c.req.header('cf-connecting-ip') ?? null,
+    });
+
+    return c.json({ data: created }, 201);
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw conflict(`Unit "${input.code}" already exists`);
+    }
+    throw error;
+  }
+});
+
 /* ── Products ──────────────────────────────────────────────────────────────── */
 catalogRoutes.get('/products', requirePermission('inventory:read'), async (c) => {
   const { q, limit, offset, includeInactive, type } = parseQuery(
@@ -148,6 +186,10 @@ catalogRoutes.post('/products', requirePermission('inventory:write'), async (c) 
   const db = createDb(c.env.DB);
   const actor = c.get('user');
 
+  // Validated against the registry rather than a fixed list, so an Admin can add
+  // a unit without a deploy.
+  await assertKnownUnits(db, [input.unit]);
+
   try {
     const [created] = await db.insert(products).values(input).returning();
     if (!created) throw conflict('Failed to create product');
@@ -179,6 +221,8 @@ catalogRoutes.patch('/products/:id', requirePermission('inventory:write'), async
   // value used to be.
   const before = await db.select().from(products).where(eq(products.id, id)).get();
   if (!before) throw notFound('Product not found');
+
+  await assertKnownUnits(db, [input.unit]);
 
   const [updated] = await db
     .update(products)

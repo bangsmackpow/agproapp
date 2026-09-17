@@ -46,6 +46,7 @@ import {
   PRODUCT_TYPES,
   PROGRAM_STAGES,
   UNITS,
+  UNIT_DIMENSIONS,
   USER_ROLES,
   VENDOR_BILL_STATUSES,
 } from '../shared/enums';
@@ -362,6 +363,36 @@ export const importDrafts = sqliteTable(
  * 4. CATALOGUE & INVENTORY
  * ════════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Units of measure.
+ *
+ * A table rather than a fixed list, because the business registers units as it
+ * goes and an Admin should not need a deploy to add "2.5 gal jug".
+ *
+ * The six `unit`-style columns elsewhere stay TEXT: Drizzle's column `enum` is a
+ * TypeScript-level constraint with no SQL CHECK behind it, so this table becomes
+ * the *validation* source rather than a foreign key. That is why introducing it
+ * needs no data migration — existing values keep working and are checked against
+ * the registry at the API boundary.
+ *
+ * `factor_to_base` expresses the unit in base units of its own dimension, so
+ * conversion within a dimension is multiplication. `fl oz` is the volume base and
+ * `lb` the mass base, matching how the sheets are written.
+ */
+export const units = sqliteTable(
+  'units',
+  {
+    code: text('code').primaryKey(),
+    label: text('label').notNull(),
+    dimension: text('dimension', { enum: UNIT_DIMENSIONS }).notNull(),
+    factorToBase: real('factor_to_base').notNull().default(1),
+    sortOrder: integer('sort_order').notNull().default(0),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    ...timestamps(),
+  },
+  (t) => [index('units_dimension_idx').on(t.dimension)],
+);
+
 export const products = sqliteTable(
   'products',
   {
@@ -372,7 +403,7 @@ export const products = sqliteTable(
     type: text('type', { enum: PRODUCT_TYPES }).notNull(),
     brand: text('brand'),
     manufacturer: text('manufacturer'),
-    unit: text('unit', { enum: UNITS }).notNull().default('each'),
+    unit: text('unit').notNull().default('each'),
     packageSize: text('package_size'),
     category: text('category'),
 
@@ -797,7 +828,7 @@ export const invoiceItems = sqliteTable(
 
     description: text('description').notNull(),
     quantity: real('quantity').notNull().default(1),
-    unit: text('unit', { enum: UNITS }),
+    unit: text('unit'),
     /** Populated for per-acre program lines. */
     acres: real('acres'),
 
@@ -1182,6 +1213,7 @@ export type ImportDraft = typeof importDrafts.$inferSelect;
 
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;
+export type UnitRow = typeof units.$inferSelect;
 export type ProductCost = typeof productCosts.$inferSelect;
 export type Warehouse = typeof warehouses.$inferSelect;
 export type InventoryLot = typeof inventoryLots.$inferSelect;
