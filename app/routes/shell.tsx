@@ -29,6 +29,7 @@ function navItems(user: SessionUser): NavItem[] {
     { to: '/invoices', label: 'Invoices', show: can(user.role, 'invoices:read') },
     { to: '/imports', label: 'Imports', show: can(user.role, 'inventory:import') },
     { to: '/checks', label: 'Checkwriting', show: canAccessCheckwriting(user.role) },
+    { to: '/audit', label: 'Audit', show: can(user.role, 'admin:audit') },
   ];
 }
 

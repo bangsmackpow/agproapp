@@ -27,7 +27,7 @@ const EMAIL = `smoke-${Date.now()}@agpro.local`;
 const PASSWORD = generatePassword();
 
 /** Screens the shell renders; each must load without throwing. */
-const SCREENS = ['/', '/customers', '/inventory', '/invoices', '/checks', '/imports'];
+const SCREENS = ['/', '/customers', '/inventory', '/invoices', '/checks', '/imports', '/audit'];
 
 const results = [];
 
@@ -78,8 +78,25 @@ function createSmokeUser() {
 
 function removeSmokeUser() {
   executeSql(
-    `DELETE FROM users WHERE email = ${sqlText(EMAIL)}; DELETE FROM login_attempts WHERE email = ${sqlText(EMAIL)};`,
+    [
+      `DELETE FROM users WHERE email = ${sqlText(EMAIL)};`,
+      `DELETE FROM login_attempts WHERE email = ${sqlText(EMAIL)};`,
+      // Products created by the audit check, so repeat runs do not accumulate.
+      `DELETE FROM audit_logs WHERE entity_id IN (SELECT id FROM products WHERE sku LIKE 'SMOKE-%');`,
+      `DELETE FROM products WHERE sku LIKE 'SMOKE-%';`,
+    ].join('\n'),
   );
+}
+
+/** A JSON request carrying the session cookie. */
+async function jsonRequest(path, cookie, init = {}) {
+  const response = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: { cookie, 'content-type': 'application/json', ...(init.headers ?? {}) },
+    redirect: 'manual',
+  });
+
+  return { response, body: await response.json().catch(() => null) };
 }
 
 async function signIn() {
@@ -162,8 +179,38 @@ async function run() {
       check(`screen ${screen} loads`, response.status === 200, `got ${response.status}`);
     }
 
-    /* ── Sign out ────────────────────────────────────────────────────────── */
-    const signedOut = await fetch(`${BASE}/logout`, {
+    /* ── Audit records what actually changed ─────────────────────────────── */
+    // A diff is only worth having if it captures the previous value, so this
+    // changes a product's unit and reads the change back out of the trail.
+    const sku = `SMOKE-${Date.now()}`;
+    const { body: created } = await jsonRequest('/api/products', cookie, {
+      method: 'POST',
+      body: JSON.stringify({ sku, name: 'Smoke Audit Product', type: 'chemical', unit: 'gal' }),
+    });
+    check('product can be created', Boolean(created?.data?.id), JSON.stringify(created));
+
+    const productId = created?.data?.id;
+
+    if (productId) {
+      await jsonRequest(`/api/products/${productId}`, cookie, {
+        method: 'PATCH',
+        body: JSON.stringify({ unit: 'oz' }),
+      });
+
+      const { body: audit } = await jsonRequest('/api/audit?entityType=product&limit=20', cookie);
+      const event = (audit?.data ?? []).find(
+        (row) => row.entityId === productId && row.action === 'product.updated',
+      );
+      const change = event?.metadata?.changes?.unit;
+
+      check(
+        'the audit trail records who changed what, including the previous value',
+        change?.from === 'gal' && change?.to === 'oz',
+        `expected gal -> oz, got ${JSON.stringify(change)}`,
+      );
+    }
+
+    /* ── Sign out ────────────────────────────────────────────────────────── */    const signedOut = await fetch(`${BASE}/logout`, {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
       body: 'x=1',

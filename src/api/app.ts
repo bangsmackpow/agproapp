@@ -5,6 +5,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv } from '../env';
 import { errorBody, HttpError } from './lib/http';
 import { requestContext } from './middleware';
+import { auditRoutes } from './routes/audit';
 import { authRoutes } from './routes/auth';
 import { catalogRoutes } from './routes/catalog';
 import { checkRoutes } from './routes/checks';
@@ -67,6 +68,7 @@ export function createApp(): Hono<AppEnv> {
   app.route('/api/invoices', invoiceRoutes);
   app.route('/api/checks', checkRoutes);
   app.route('/api/company', companyRoutes);
+  app.route('/api/audit', auditRoutes);
   app.route('/api/imports', importRoutes);
   // Mounted at /api: provides /api/products, /api/inventory/*, /api/drone-units, /api/pricing/*
   app.route('/api', catalogRoutes);

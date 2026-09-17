@@ -125,6 +125,19 @@ export const listQuerySchema = z.object({
   includeInactive: booleanQuery(false),
 });
 
+export const auditListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  actorUserId: id().optional(),
+  /** Matched against the actor's email, which is what an operator actually knows. */
+  actorEmail: email().optional(),
+  entityType: optionalText(40),
+  entityId: id().optional(),
+  action: optionalText(80),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
+
 /* ── Catalogue ─────────────────────────────────────────────────────────────── */
 
 export const productCreateSchema = z.object({

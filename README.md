@@ -211,6 +211,7 @@ All routes other than health require a session cookie. Permission shown is the m
 | `GET /api/invoices/:id/deliveries` | `invoices:read` | Delivery history |
 | `POST /api/invoices/:id/deliveries` | `invoices:send` | Deliver by `email`, `print` or `download`. Email is gated on seed compliance |
 | `GET/PATCH /api/company` | session / `admin:settings` | Letterhead and cheque template configuration |
+| `GET /api/audit`, `GET /api/audit/facets` | `admin:audit` | **Admin only, read-only.** Append-only trail; there is deliberately no write or delete endpoint |
 | `GET /api/checks`, `GET /api/checks/:id` | `checks:read` | **Admin only** |
 | `POST /api/checks` | `checks:write` | **Admin only.** Allocates the next check number atomically |
 | `POST /api/checks/:id/print` · `/clear` · `/void` | `checks:print` / `checks:write` / `checks:void` | **Admin only.** Void reverses allocations and restores bill balances |
@@ -234,8 +235,12 @@ Both documents render at `/invoices/:id/print` and `/checks/:id/print`, outside 
 
 **MICR is off by default.** A MICR line is only readable by a bank's sorter when printed in E-13B font with magnetic toner on encoded stock; printed otherwise it looks authoritative and scans as nothing. Enable it only if your stock and printer qualify — and note that a partial line is refused rather than emitted, because encoding half the information is worse than encoding none.
 
-### Electronic delivery
+Two conventions worth knowing:
 
+- **Updates record a diff, not a field list.** `recordChange` stores only the fields that actually changed, with their previous values, so "who switched this product from gallons to ounces" is answerable. A save that changes nothing writes nothing, and credential-shaped keys are redacted so the trail never carries password hashes.
+- **Refused actions are audited too.** A blocked destructive attempt is worth knowing about.
+
+### Electronic delivery
 `POST /api/invoices/:id/deliveries` transmits by email, or records a `print`/`download` for the paper trail. Email delivery runs the Draft → Sent transition first, so a regulated seed sale cannot reach a customer's inbox before its BOL/CMR and Order Number tokens are verified.
 
 Outcome is recorded honestly in three states:

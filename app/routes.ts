@@ -21,5 +21,6 @@ export default [
     route('invoices/:id', 'routes/invoice-detail.tsx'),
     route('checks', 'routes/checks.tsx'),
     route('imports', 'routes/imports.tsx'),
+    route('audit', 'routes/audit.tsx'),
   ]),
 ] satisfies RouteConfig;
