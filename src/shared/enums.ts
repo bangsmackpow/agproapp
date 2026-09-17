@@ -61,6 +61,24 @@ export const DRONE_UNIT_STATUSES = [
 ] as const;
 export type DroneUnitStatus = (typeof DRONE_UNIT_STATUSES)[number];
 
+/**
+ * Kinds of stock movement. The ledger is append-only, so a correction is a new
+ * movement rather than an edit: `void_reversal` undoes a sale, `adjustment`
+ * covers a physical count difference.
+ */
+export const INVENTORY_MOVEMENT_TYPES = [
+  'receipt',
+  'sale',
+  'adjustment',
+  'return',
+  'void_reversal',
+] as const;
+export type InventoryMovementType = (typeof INVENTORY_MOVEMENT_TYPES)[number];
+
+/** What caused a movement, so it can be traced back to a document. */
+export const MOVEMENT_REFERENCE_TYPES = ['invoice', 'vendor_bill', 'import', 'manual'] as const;
+export type MovementReferenceType = (typeof MOVEMENT_REFERENCE_TYPES)[number];
+
 /* ── Pricing engine ────────────────────────────────────────────────────────── */
 
 /**

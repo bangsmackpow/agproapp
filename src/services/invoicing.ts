@@ -26,6 +26,7 @@ import {
   taxCents,
 } from '../shared/pricing';
 import { findApplicationFee, findProgramPrice, getTierByKey } from './pricing';
+import { consumeForInvoice, reverseForInvoice } from './inventory';
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Pure totals math — no database access, so it is exhaustively unit-testable.
@@ -499,6 +500,24 @@ export async function updateInvoiceStatus(
 
   const [updated] = await db.update(invoices).set(patch).where(eq(invoices.id, invoiceId)).returning();
   if (!updated) throw conflict('Failed to update invoice');
+
+  // Stock moves as a consequence of the document, not of the API call: sending
+  // consumes, cancelling reverses. Both are written to the ledger, which is
+  // append-only, so a correction is a new movement rather than an edit.
+  if (nextStatus === 'sent') {
+    const items = await db
+      .select()
+      .from(invoiceItems)
+      .where(eq(invoiceItems.invoiceId, invoiceId))
+      .all();
+
+    await consumeForInvoice(db, invoiceId, items, actorUserId, now);
+  }
+
+  if (nextStatus === 'canceled') {
+    await reverseForInvoice(db, invoiceId, actorUserId, now);
+  }
+
   return updated;
 }
 

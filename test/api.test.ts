@@ -10,6 +10,8 @@ import {
   bankAccounts,
   companySettings,
   customers,
+  inventoryLots,
+  inventoryMovements,
   invoiceItems,
   invoiceSequences,
   iowaComplianceLogs,
@@ -21,6 +23,7 @@ import {
 import { PRICE_TIER_KEYS } from '../src/shared/enums';
 import { DEFAULT_TIER_MULTIPLIERS, PRICE_TIER_LABELS } from '../src/shared/pricing';
 import { MAX_FAILURES_PER_EMAIL } from '../src/services/login-rate-limit';
+import { productPoolQuantity, reverseForInvoice } from '../src/services/inventory';
 
 const PASSWORD = 'correct horse battery staple';
 
@@ -34,6 +37,8 @@ const CUSTOMER_ID = '44444444-4444-4444-8444-444444444444';
 const SEED_PRODUCT_ID = '55555555-5555-4555-8555-555555555555';
 /** Unregulated item, so delivery can be tested without the seed gate in the way. */
 const MISC_PRODUCT_ID = '55555555-5555-4555-8555-555555555556';
+/** Dedicated stock-tracked product, so pool assertions are not disturbed by other tests. */
+const STOCK_PRODUCT_ID = '55555555-5555-4555-8555-555555555557';
 const BANK_ACCOUNT_ID = '66666666-6666-4666-8666-666666666666';
 
 function cookieFrom(response: Response): string {
@@ -124,6 +129,37 @@ beforeAll(async () => {
     type: 'misc',
     unit: 'each',
     defaultCostCents: 3000,
+  });
+
+  // Stock-tracked product with a single receipt of 10, so the pool starts known.
+  await db.insert(products).values({
+    id: STOCK_PRODUCT_ID,
+    sku: 'CHEM-STOCKTEST',
+    name: 'Stock Test Herbicide',
+    type: 'chemical',
+    unit: 'gal',
+    defaultCostCents: 1477,
+  });
+
+  await db.insert(inventoryLots).values({
+    id: '77777777-7777-4777-8777-777777777777',
+    productId: STOCK_PRODUCT_ID,
+    lotNumber: 'LOT-A',
+    quantityOnHand: 10,
+    unitCostCents: 1477,
+    receivedAt: new Date('2026-06-01T00:00:00Z'),
+  });
+
+  await db.insert(inventoryMovements).values({
+    productId: STOCK_PRODUCT_ID,
+    lotId: '77777777-7777-4777-8777-777777777777',
+    movementType: 'receipt',
+    quantityDelta: 10,
+    unit: 'gal',
+    quantityInBase: 10,
+    unitCostCents: 1477,
+    referenceType: 'manual',
+    occurredAt: new Date('2026-06-01T00:00:00Z'),
   });
 
   await db.insert(bankAccounts).values({
@@ -480,6 +516,96 @@ describe('Iowa seed compliance gate', () => {
     }
 
     expect(duplicateRejected).toBe(true);
+  });
+});
+
+describe('stock ledger', () => {
+  /** Set by the consumption test so the reversal test operates on the same invoice. */
+  let stockInvoiceId: string | null = null;
+
+  it('starts from the receipt', async () => {
+    const db = createDb(env.DB);
+    expect(await productPoolQuantity(db, STOCK_PRODUCT_ID)).toBe(10);
+  });
+
+  it('consumes stock when an invoice is sent, and restores it when cancelled', async () => {
+    const db = createDb(env.DB);
+
+    const created = await api('/api/invoices', {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({
+        customerId: CUSTOMER_ID,
+        pricingTierKey: 'cash_app',
+        items: [
+          {
+            lineType: 'product',
+            productId: STOCK_PRODUCT_ID,
+            description: 'Stock Test Herbicide',
+            quantity: 3,
+            unit: 'gal',
+            unitPriceCents: 2000,
+          },
+        ],
+      }),
+    });
+    const invoiceId = ((await created.json()) as { data: { id: string } }).data.id;
+    stockInvoiceId = invoiceId;
+
+    const sent = await api(`/api/invoices/${invoiceId}/send`, { method: 'POST', cookie: salesCookie });
+    expect(sent.status).toBe(200);
+    expect(await productPoolQuantity(db, STOCK_PRODUCT_ID)).toBe(7);
+
+    // Cancelling is manager-level; sales can send but not cancel.
+    const canceled = await api(`/api/invoices/${invoiceId}/cancel`, {
+      method: 'POST',
+      cookie: managerCookie,
+    });
+    expect(canceled.status).toBe(200);
+    expect(await productPoolQuantity(db, STOCK_PRODUCT_ID)).toBe(10);
+  });
+
+  it('reversing twice does not inflate the pool', async () => {
+    const db = createDb(env.DB);
+
+    // Already reversed above; a second reversal must be a no-op rather than
+    // crediting another 3 gallons.
+    if (stockInvoiceId) {
+      await reverseForInvoice(db, stockInvoiceId, null, new Date());
+      await reverseForInvoice(db, stockInvoiceId, null, new Date());
+    }
+
+    expect(await productPoolQuantity(db, STOCK_PRODUCT_ID)).toBe(10);
+  });
+
+  it('goes negative rather than truncating when more is sold than held', async () => {
+    const db = createDb(env.DB);
+
+    const created = await api('/api/invoices', {
+      method: 'POST',
+      cookie: salesCookie,
+      body: JSON.stringify({
+        customerId: CUSTOMER_ID,
+        pricingTierKey: 'cash_app',
+        items: [
+          {
+            lineType: 'product',
+            productId: STOCK_PRODUCT_ID,
+            description: 'Stock Test Herbicide',
+            quantity: 15,
+            unit: 'gal',
+            unitPriceCents: 2000,
+          },
+        ],
+      }),
+    });
+    const invoiceId = ((await created.json()) as { data: { id: string } }).data.id;
+
+    await api(`/api/invoices/${invoiceId}/send`, { method: 'POST', cookie: salesCookie });
+
+    // The sale happened, so the pool says -5. A person needs to see that, not have
+    // it rounded to zero.
+    expect(await productPoolQuantity(db, STOCK_PRODUCT_ID)).toBe(-5);
   });
 });
 

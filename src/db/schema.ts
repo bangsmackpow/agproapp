@@ -39,12 +39,14 @@ import {
   IMPORT_BATCH_STATUSES,
   IMPORT_DRAFT_STATUSES,
   IMPORT_TARGETS,
+  INVENTORY_MOVEMENT_TYPES,
   INVOICE_LINE_TYPES,
   INVOICE_STATUSES,
   PAYMENT_METHODS,
   PRICE_TIER_KEYS,
   PRODUCT_TYPES,
   PROGRAM_STAGES,
+  MOVEMENT_REFERENCE_TYPES,
   UNITS,
   UNIT_DIMENSIONS,
   USER_ROLES,
@@ -404,6 +406,19 @@ export const products = sqliteTable(
     brand: text('brand'),
     manufacturer: text('manufacturer'),
     unit: text('unit').notNull().default('each'),
+    /**
+     * The unit stock is pooled and reported in. Null means "use `unit`".
+     *
+     * A product bought in 2.5 gal jugs and applied at 32 oz/acre still holds
+     * stock in one canonical unit; every quantity is converted into this before
+     * being summed, which is what makes a running total meaningful.
+     */
+    baseUnitCode: text('base_unit_code'),
+    /**
+     * Fallback margin for flat items that carry no explicit tier price.
+     * The 2027 sheet is unpriced, so this is how a product gets a sell price.
+     */
+    markupPercent: real('markup_percent').notNull().default(10),
     packageSize: text('package_size'),
     category: text('category'),
 
@@ -541,6 +556,52 @@ export const droneUnits = sqliteTable(
   ],
 );
 
+/**
+ * Append-only stock ledger. The source of truth for how much of a product exists.
+ *
+ * Stock is pooled per product rather than partitioned by lot, because a gallon of
+ * herbicide is a gallon of herbicide and nobody should have to pick 1 from one
+ * batch and 13 from another to sell 14. Lots remain as *receipts* recording where
+ * stock came from and what it cost; FIFO allocation draws on them behind the
+ * scenes purely to compute cost of goods sold, and the allocation is written here
+ * so a recall question can still be answered after the fact.
+ *
+ * Nothing prunes this table. Audit rows record actions and are archived after
+ * twelve months; these are financial data, and pruning them would reset every
+ * running total and destroy margin history.
+ */
+export const inventoryMovements = sqliteTable(
+  'inventory_movements',
+  {
+    id: primaryId(),
+    /** `restrict`: the ledger must not lose the subject it describes. */
+    productId: text('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    /** The receipt drawn on, when FIFO allocation attributed this movement. */
+    lotId: text('lot_id').references(() => inventoryLots.id, { onDelete: 'set null' }),
+    movementType: text('movement_type', { enum: INVENTORY_MOVEMENT_TYPES }).notNull(),
+    /** Signed: receipts positive, sales and write-offs negative. */
+    quantityDelta: real('quantity_delta').notNull(),
+    unit: text('unit'),
+    /** The same quantity in the product's base unit, so the pool is a plain SUM. */
+    quantityInBase: real('quantity_in_base').notNull(),
+    unitCostCents: integer('unit_cost_cents'),
+    referenceType: text('reference_type', { enum: MOVEMENT_REFERENCE_TYPES }),
+    referenceId: text('reference_id'),
+    occurredAt: integer('occurred_at', { mode: 'timestamp_ms' }).notNull(),
+    note: text('note'),
+    createdByUserId: text('created_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    ...timestamps(),
+  },
+  (t) => [
+    index('inventory_movements_product_idx').on(t.productId, t.occurredAt),
+    index('inventory_movements_lot_idx').on(t.lotId),
+    index('inventory_movements_reference_idx').on(t.referenceType, t.referenceId),
+  ],
+);
 /* ════════════════════════════════════════════════════════════════════════════
  * 5. PRICING ENGINE
  * ════════════════════════════════════════════════════════════════════════════ */
@@ -1217,6 +1278,8 @@ export type UnitRow = typeof units.$inferSelect;
 export type ProductCost = typeof productCosts.$inferSelect;
 export type Warehouse = typeof warehouses.$inferSelect;
 export type InventoryLot = typeof inventoryLots.$inferSelect;
+export type InventoryMovement = typeof inventoryMovements.$inferSelect;
+export type NewInventoryMovement = typeof inventoryMovements.$inferInsert;
 export type DroneUnit = typeof droneUnits.$inferSelect;
 
 export type PriceTier = typeof priceTiers.$inferSelect;
