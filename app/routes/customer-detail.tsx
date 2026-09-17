@@ -15,12 +15,11 @@ import { parseCustomerForm } from '../lib/customer-payload.server';
  * row action, so changing a customer's standing is an edit like any other and is
  * captured by the audit trail through the same PATCH.
  */
-export async function loader({ request, context }: LoaderFunctionArgs) {
+export async function loader({ request, context, params }: LoaderFunctionArgs) {
   const env = getEnv(context);
   const user = await requireUser(env, request);
 
-  const id = new URL(request.url).pathname.split('/').filter(Boolean).pop() ?? '';
-  const customer = await api<{ data: CustomerDefaults }>(env, request, `/customers/${id}`);
+  const customer = await api<{ data: CustomerDefaults }>(env, request, `/customers/${params.id}`);
 
   return {
     customer: customer.data,

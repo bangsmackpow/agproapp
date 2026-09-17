@@ -166,6 +166,24 @@ async function jsonRequest(path, cookie, init = {}) {
   return { response, body: await response.json().catch(() => null) };
 }
 
+/**
+ * Loads a page with the session cookie and asserts it renders — as a document
+ * *and* as a client-side data request.
+ *
+ * Both matter, and the second is the one that bites. React Router appends `.data`
+ * when navigating on the client, so a loader that derives its id from the request
+ * URL sees `<id>.data` and asks the API for a record that does not exist. The
+ * document request still succeeds, which is how a broken customer page managed to
+ * report the customer saved and then an error immediately after.
+ */
+async function checkPage(path, cookie, label) {
+  const doc = await fetch(`${BASE}${path}`, { headers: { cookie }, redirect: 'manual' });
+  check(label, doc.status === 200, `got ${doc.status} for ${path}`);
+
+  const data = await fetch(`${BASE}${path}.data`, { headers: { cookie }, redirect: 'manual' });
+  check(`${label} (client navigation)`, data.status === 200, `got ${data.status} for ${path}.data`);
+}
+
 async function signIn() {
   const response = await fetch(`${BASE}/login`, {
     method: 'POST',
@@ -268,6 +286,8 @@ async function run() {
     const productId = created?.data?.id;
 
     if (productId) {
+      await checkPage(`/inventory/${productId}`, cookie, 'the product record page loads');
+
       await jsonRequest(`/api/products/${productId}`, cookie, {
         method: 'PATCH',
         body: JSON.stringify({ unit: 'oz' }),
@@ -340,6 +360,10 @@ async function run() {
       );
 
       if (customer?.data?.id) {
+        // The create action redirects here, so a broken detail loader shows the
+        // customer saved and then an error — exactly the confusing pair this
+        // check exists to prevent.
+        await checkPage(`/customers/${customer.data.id}`, cookie, 'the customer record page loads');
         // The composer lives on its own route now, so the form's data endpoint
         // moved with it. Posting to /invoices.data would find no action at all.
         const submitted = await fetch(`${BASE}/invoices/new.data`, {
@@ -366,6 +390,11 @@ async function run() {
         // one would mean the regression returned by another route.
         const { body: invoices } = await jsonRequest('/api/invoices?limit=50', cookie);
         const draft = (invoices?.data ?? []).find((row) => row.customerName === CUSTOMER_NAME);
+
+        if (draft) {
+          await checkPage(`/invoices/${draft.id}`, cookie, 'the invoice record page loads');
+        }
+
         const { body: detail } = draft
           ? await jsonRequest(`/api/invoices/${draft.id}`, cookie)
           : { body: null };
