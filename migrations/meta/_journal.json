@@ -43,6 +43,13 @@
       "when": 1789658033004,
       "tag": "0005_strange_exiles",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789678091296,
+      "tag": "0006_burly_doomsday",
+      "breakpoints": true
     }
   ]
 }

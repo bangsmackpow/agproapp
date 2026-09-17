@@ -420,6 +420,13 @@ export const products = sqliteTable(
     id: primaryId(),
     sku: text('sku').notNull(),
     name: text('name').notNull(),
+    /**
+     * Free text for the catalogue — what the item actually is and what it is for.
+     *
+     * Internal only: invoice lines describe themselves from the product *name*, so
+     * this never reaches a customer-facing document.
+     */
+    description: text('description'),
     /** Inventory division: chemical | seed | drone | misc. */
     type: text('type', { enum: PRODUCT_TYPES }).notNull(),
     brand: text('brand'),

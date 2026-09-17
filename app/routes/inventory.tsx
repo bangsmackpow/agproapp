@@ -28,8 +28,9 @@ interface ProductRow {
   baseUnit: string;
   sku: string;
   name: string;
+  description: string | null;
   type: string;
-  brand: string | null;
+  manufacturer: string | null;
   unit: string;
   epaNumber: string | null;
   isRegulatedSeed: boolean;
@@ -51,13 +52,6 @@ interface ListEnvelope<T> {
   data: T[];
   pagination: { total: number };
 }
-
-const TONES: Record<string, 'neutral' | 'info' | 'success' | 'warning'> = {
-  chemical: 'info',
-  seed: 'success',
-  drone: 'warning',
-  misc: 'neutral',
-};
 
 const PAGE_SIZE = 50;
 
@@ -213,7 +207,7 @@ export default function InventoryRoute() {
           <input
             name="q"
             defaultValue={params.get('q') ?? ''}
-            placeholder="Search name, SKU, brand, EPA…"
+            placeholder="Search name, SKU, vendor…"
             aria-label="Search catalogue"
             className="h-7 w-56 rounded-md border border-border bg-white px-2 text-sm placeholder:text-ink-muted focus:border-brand-600 focus:outline-none"
           />
@@ -236,13 +230,10 @@ export default function InventoryRoute() {
               <SortLink basePath="/inventory" current={search} field="name" active={sort === 'name'} direction={direction}>
                 Name
               </SortLink>
-              <SortLink basePath="/inventory" current={search} field="type" active={sort === 'type'} direction={direction}>
-                Division
-              </SortLink>
+              {/* Division is the filter above, not a column — repeating it in every
+                  row costs a column and tells you nothing you did not just choose. */}
+              <Th>Vendor</Th>
               <Th>Unit</Th>
-              <Th>EPA / regulatory</Th>
-              {/* Not sortable: the on-hand figure is the sum of the movement ledger,
-                  not a column, so the API does not offer it as a sort key. */}
               <Th className="text-right">On hand</Th>
               <SortLink
                 basePath="/inventory"
@@ -259,7 +250,7 @@ export default function InventoryRoute() {
           </thead>
           <tbody>
             {products.length === 0 ? (
-              <EmptyRow colSpan={8} message="Nothing in the catalogue matches." />
+              <EmptyRow colSpan={7} message="Nothing in the catalogue matches." />
             ) : (
               products.map((product) => (
                 <tr key={product.id} className="hover:bg-muted/40">
@@ -273,25 +264,24 @@ export default function InventoryRoute() {
                     </Link>
                     {product.isActive ? null : (
                       <span className="ml-2 inline-block align-middle">
-                        <Status>Inactive</Status>
+                        <Status tone="danger">Inactive</Status>
                       </span>
                     )}
+                    {/* Regulatory flags stay on the row rather than in their own
+                        column — they are the one attribute that changes what you
+                        can do with an item, so losing them to save space would be
+                        a bad trade. */}
+                    {product.isRegulatedSeed ? (
+                      <span className="ml-2 inline-block align-middle">
+                        <Badge tone="warning">Regulated seed</Badge>
+                      </span>
+                    ) : null}
+                    {product.description ? (
+                      <span className="block text-xs text-ink-muted">{product.description}</span>
+                    ) : null}
                   </Td>
-                  <Td>
-                    <Badge tone={TONES[product.type] ?? 'neutral'}>{product.type}</Badge>
-                  </Td>
+                  <Td className="text-ink-muted">{product.manufacturer ?? '—'}</Td>
                   <Td className="text-ink-muted">{product.unit}</Td>
-                  <Td>
-                    {product.epaNumber ? (
-                      <span className="tabular">{product.epaNumber}</span>
-                    ) : product.isRegulatedSeed ? (
-                      <Badge tone="warning">Regulated seed</Badge>
-                    ) : product.isSerialized ? (
-                      <Badge tone="info">Serialized</Badge>
-                    ) : (
-                      <span className="text-ink-muted">—</span>
-                    )}
-                  </Td>
                   <Td className="tabular text-right">
                     {formatNumber(product.quantityOnHand, 3)} {product.baseUnit}
                   </Td>

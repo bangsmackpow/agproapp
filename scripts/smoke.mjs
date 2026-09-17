@@ -42,6 +42,7 @@ const PRICE_TIER_KEY = 'cash_app';
  */
 const CUSTOMER_NAME = 'Smoke Invoice Customer';
 const PRODUCT_NAME = 'Smoke Audit Product';
+const PRODUCT_DESCRIPTION = 'Post-emergent broadleaf control, 32 oz/acre';
 
 /** Screens the shell renders; each must load without throwing. */
 const SCREENS = [
@@ -276,6 +277,7 @@ async function run() {
       body: JSON.stringify({
         sku,
         name: PRODUCT_NAME,
+        description: PRODUCT_DESCRIPTION,
         type: 'chemical',
         unit: 'gal',
         cashAppPriceCents: 500,
@@ -287,6 +289,16 @@ async function run() {
 
     if (productId) {
       await checkPage(`/inventory/${productId}`, cookie, 'the product record page loads');
+
+      // The description is the newest field on the product, and it round-trips
+      // through the same parser the form uses — so a mapping slip would show here
+      // rather than as a silently empty catalogue.
+      const { body: fetched } = await jsonRequest(`/api/products/${productId}`, cookie);
+      check(
+        'the product description round-trips',
+        fetched?.data?.description === PRODUCT_DESCRIPTION,
+        `got ${JSON.stringify(fetched?.data?.description)}`,
+      );
 
       await jsonRequest(`/api/products/${productId}`, cookie, {
         method: 'PATCH',

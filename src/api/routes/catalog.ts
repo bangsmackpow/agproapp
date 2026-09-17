@@ -174,7 +174,8 @@ catalogRoutes.get('/products', requirePermission('inventory:read'), async (c) =>
     const search = or(
       like(products.name, term),
       like(products.sku, term),
-      like(products.brand, term),
+      like(products.manufacturer, term),
+      like(products.description, term),
       like(products.epaNumber, term),
     );
     if (search) conditions.push(search);

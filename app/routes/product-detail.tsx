@@ -28,13 +28,21 @@ interface Product {
   id: string;
   sku: string;
   name: string;
+  description: string | null;
   type: string;
+  manufacturer: string | null;
   unit: string;
   baseUnitCode: string | null;
   isActive: boolean;
   isRegulatedSeed: boolean;
+  isSerialized: boolean;
   epaNumber: string | null;
   defaultCostCents: number | null;
+  financedAppPriceCents: number | null;
+  cashAppPriceCents: number | null;
+  carryPriceCents: number | null;
+  taxable: boolean;
+  notes: string | null;
   markupPercent: number;
 }
 
@@ -185,10 +193,17 @@ export default function ProductDetailRoute() {
     <>
       <PageHeader
         title={product.name}
-        description={`${product.sku} · ${product.type}${product.epaNumber ? ` · EPA ${product.epaNumber}` : ''}`}
+        description={[
+          product.sku,
+          product.type,
+          product.manufacturer,
+          product.epaNumber ? `EPA ${product.epaNumber}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
         actions={
-          <div className="flex items-center gap-2">
-            {product.isActive ? null : <Badge tone="danger">Inactive</Badge>}
+          <div className="flex items-center gap-3">
+            {product.isActive ? null : <Status tone="danger">Inactive</Status>}
             {product.isRegulatedSeed ? <Badge tone="warning">Regulated seed</Badge> : null}
             <Link className="text-sm text-brand-700 underline" to="/inventory">
               All inventory
@@ -196,6 +211,10 @@ export default function ProductDetailRoute() {
           </div>
         }
       />
+
+      {product.description ? (
+        <p className="mb-3 max-w-3xl text-sm text-ink-muted">{product.description}</p>
+      ) : null}
 
       {result?.error ? (
         <div className="mb-4">
@@ -422,13 +441,21 @@ export default function ProductDetailRoute() {
               id: product.id,
               sku: product.sku,
               name: product.name,
+              description: product.description,
               type: product.type,
+              manufacturer: product.manufacturer,
               unit: product.unit,
-              baseUnitCode: product.baseUnitCode,
               epaNumber: product.epaNumber,
               isRegulatedSeed: product.isRegulatedSeed,
+              isSerialized: product.isSerialized,
               defaultCostCents: product.defaultCostCents,
-              markupPercent: product.markupPercent,
+              // Previously omitted, so an existing price was invisible in the edit
+              // form — you could not see what you were changing.
+              financedAppPriceCents: product.financedAppPriceCents,
+              cashAppPriceCents: product.cashAppPriceCents,
+              carryPriceCents: product.carryPriceCents,
+              taxable: product.taxable,
+              notes: product.notes,
             }}
           />
         </div>

@@ -31,8 +31,24 @@ function text(form: FormData, name: string): string | undefined {
   return value === '' ? undefined : value;
 }
 
-/** Unchecked checkboxes are absent from FormData, so anything else means false. */
-const flag = (form: FormData, name: string) => form.get(name) === 'on';
+/**
+ * Checkbox state, or `undefined` when the control is not in the form at all.
+ *
+ * A checkbox cannot report "off" on its own: an unticked box is simply not
+ * submitted, which is indistinguishable from a control the form no longer
+ * renders. So every checkbox is paired with a hidden input of the same name
+ * carrying `off`, and the *last* value wins — `on` when ticked, `off` when not.
+ *
+ * No value at all is therefore the only signal that the field is absent, and that
+ * must mean "leave the stored value alone". Returning a boolean either way would
+ * silently reset a hidden field on every save, which is how hiding
+ * `isRegulatedSeed` would disarm the seed-compliance gate.
+ */
+const flag = (form: FormData, name: string): boolean | undefined => {
+  const values = form.getAll(name);
+  if (values.length === 0) return undefined;
+  return values[values.length - 1] === 'on';
+};
 
 /**
  * Builds the API payload from a submitted product form.
@@ -45,6 +61,7 @@ export function parseProductForm(form: FormData): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     sku: text(form, 'sku'),
     name: text(form, 'name'),
+    description: text(form, 'description'),
     type: text(form, 'type'),
     brand: text(form, 'brand'),
     manufacturer: text(form, 'manufacturer'),
@@ -56,10 +73,15 @@ export function parseProductForm(form: FormData): Record<string, unknown> {
     pesticideType: text(form, 'pesticideType'),
     activeIngredient: text(form, 'activeIngredient'),
     density: number(form, 'density'),
-    stateRestrictions: (text(form, 'stateRestrictions') ?? '')
-      .split(',')
-      .map((code) => code.trim().toUpperCase())
-      .filter((code) => code.length === 2),
+    // Absent means untouched. `.split()` on an empty string yields `[]` rather
+    // than undefined, so without this guard hiding the field would clear every
+    // stored restriction on the next save.
+    stateRestrictions: form.has('stateRestrictions')
+      ? (text(form, 'stateRestrictions') ?? '')
+          .split(',')
+          .map((code) => code.trim().toUpperCase())
+          .filter((code) => code.length === 2)
+      : undefined,
     isRegulatedSeed: flag(form, 'isRegulatedSeed'),
     seedTraitSystem: text(form, 'seedTraitSystem'),
     isSerialized: flag(form, 'isSerialized'),

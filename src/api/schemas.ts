@@ -184,8 +184,11 @@ export const auditListQuerySchema = z.object({
 export const productCreateSchema = z.object({
   sku: z.string().trim().min(1).max(60),
   name: z.string().trim().min(1).max(200),
+  /** Free text for the catalogue. Deliberately not used on invoice lines. */
+  description: optionalText(500),
   type: oneOf(PRODUCT_TYPES),
   brand: optionalText(80),
+  /** Presented as "Vendor" in the UI. The column name predates that. */
   manufacturer: optionalText(80),
   unit: optionalText(20),
   packageSize: optionalText(60),
