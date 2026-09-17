@@ -31,6 +31,7 @@
     "db:seed:remote": "wrangler d1 execute agpro-db --remote --file=./seed/0001_reference.sql && wrangler d1 execute agpro-db --remote --file=./seed/0002_units.sql"
   },
   "dependencies": {
+    "@noble/hashes": "^2.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",

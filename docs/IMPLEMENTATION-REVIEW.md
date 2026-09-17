@@ -142,8 +142,9 @@ Not in the spec. The Channel BOL carries a **lot number and a `Seed NO.` on ever
 
 ### 4.7 Platform constraints that shaped the design
 
-- **PBKDF2 is capped at 100,000 iterations** by Cloudflare's WebCrypto — confirmed as a deliberate DoS guard, with the request to raise it open since October 2023. A value above the cap passes locally (workerd in tests does not enforce it) and fails in production. This caused a real outage. The work factor is now both a constant and a tested guard.
-- **CPU budget forced a plan check.** PBKDF2 at 100k measures **~85 ms** in workerd. Free is 10 ms, Bundled 50 ms, Paid 30 s. Any real password hash requires a paid plan.
+- **PBKDF2 is capped at 100,000 iterations** by Cloudflare's WebCrypto — confirmed as a deliberate DoS guard, with the request to raise it open since October 2023. A value above the cap passes locally (workerd in tests does not enforce it) and fails in production. This caused a real outage. The cap is now both a validated guard and a tested limit on the legacy verification path.
+- **CPU budget forced a plan check.** PBKDF2 at 100k measures **~85 ms** in workerd; its Argon2id replacement at 19 MiB / t=2 measures **~341 ms**. Free is 10 ms, Bundled 50 ms, Paid 30 s. Any real password hash requires a paid plan, and Argon2id more firmly so.
+- **Cloudflare does not recommend a password hashing algorithm.** Web Crypto lists PBKDF2 as its only KDF and explicitly warns that MD5 is weak; it says nothing about what to use for passwords. Argon2id is the OWASP/NIST recommendation, and is implemented here in pure JavaScript via `@noble/hashes` rather than WASM — no binary to ship, and one implementation shared by the Worker, the tests and the CLI, which removes the format-drift risk that previously let the CLI mint digests the Worker could not verify.
 - **KV serialises single-key writes to ~1/second**, which is exactly the access pattern credential stuffing produces — so rate-limit counters live in D1, not KV.
 
 ---
@@ -190,7 +191,7 @@ Honest assessment, ordered by value.
 
 | Area | Current | Better | Trade-off |
 |---|---|---|---|
-| **Password hashing** | PBKDF2-100k, platform ceiling | **Argon2id via WASM** — memory-hard, resists GPU/ASIC, OWASP's first choice | ~10-60 KB WASM, ~20-32 MB of the 128 MB isolate. Affordable on Paid. Can migrate silently: the digest stores its own algorithm, and `needsRehash` is already in place |
+| **Password hashing** | **Argon2id**, 19 MiB / t=2 / p=1 | Raise the memory cost when CPU budget allows — memory is the parameter that costs an attacker most | Each +1 MiB is roughly linear in login latency at ~341 ms today. Pure-JS `@noble/hashes` is ~4× slower than a WASM build would be, so the same parameters in WASM would buy back headroom |
 | **Auth ownership** | Hand-built sessions | **Better Auth 1.5** — natively supports D1 + Hono, and brings password reset, 2FA, passkeys, OAuth | It takes over the `user`/`session` tables, and our RBAC (and the checkwriting lockdown) hangs off `users.role`, so bridging is real work |
 | **PDF invoices** | HTML + browser print | Server-side PDF generation | HTML print is genuinely simpler and produces a fine document; PDFs only pay off for archival or automated attachment |
 | **Audit granularity** | Row-level: who, what, when | **Field-level before/after** | Needed for the stated use case — tracing an ounce entered instead of a gallon. The table supports it; the writers do not yet capture it |
@@ -208,8 +209,8 @@ Honest assessment, ordered by value.
 
 ## 8. Recommended next sequence
 
-1. **Price sheet import** — unblocks the core selling flow. Needs the §6 answers.
-2. **User management screen** — `GET/POST/PATCH /api/users` behind `admin:users`, plus a UI. The RBAC and audit foundations are already there.
-3. **Audit: field-level diffs + viewer** — capture before/after on inventory, pricing and invoice edits, and surface a filterable screen. Directly serves the stated need.
-4. **Password reset by email** — token table, request/confirm endpoints, reset page. The mailer exists, including its honest "not configured" state.
-5. **Argon2id migration** — silent rehash on next sign-in; no forced reset.
+1. **Price sheet import** — unblocks the core selling flow. Needs the §6 answers. The 2027 programs are imported but carry no prices, so the composer refuses program lines until these land.
+2. **User management screen** — `GET/POST/PATCH /api/users` behind `admin:users`, plus a UI. The RBAC and audit foundations are already there, and `pnpm user:create` covers the CLI path meanwhile.
+3. ~~**Audit: field-level diffs + viewer**~~ — done. `recordChange` stores before/after of changed fields only, redacts credential-shaped keys, and writes nothing when nothing changed; the Admin-only viewer at `/audit` filters and renders the diffs.
+4. **Password reset by email** — token table, request/confirm endpoints, reset page. The mailer exists, including its honest "not configured" state. The Argon2id migration means this is now a convenience rather than a prerequisite for changing algorithms.
+5. ~~**Argon2id migration**~~ — done, and it needed no forced reset. The digest records its own algorithm, so a successful sign-in silently rehashes legacy PBKDF2 accounts to Argon2id using the password just verified. Measured at ~341 ms/hash in `workerd`.

@@ -6,7 +6,7 @@ import { createDb } from '../../db';
 import { auditLogs, sessions, users, type User } from '../../db/schema';
 import type { AppEnv } from '../../env';
 import { badRequest, errorBody, parseJson, unauthorized } from '../lib/http';
-import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from '../lib/password';
+import { DUMMY_PASSWORD_HASH, hashPassword, needsRehash, verifyPassword } from '../lib/password';
 import {
   SESSION_COOKIE_NAME,
   generateSessionToken,
@@ -100,9 +100,19 @@ authRoutes.post('/login', async (c) => {
     userAgent: c.req.header('user-agent') ?? null,
   });
 
+  // Rehash when the stored digest predates the current algorithm or parameters.
+  // This is the whole migration: an account signed in with the old PBKDF2 format
+  // is upgraded here, using a password we have already proven correct. No reset,
+  // no downtime, no flag day — the account list converges as people sign in.
+  const rehashed = needsRehash(user.passwordHash) ? await hashPassword(password) : null;
+
   await db
     .update(users)
-    .set({ lastLoginAt: now, updatedAt: now })
+    .set({
+      lastLoginAt: now,
+      updatedAt: now,
+      ...(rehashed ? { passwordHash: rehashed } : {}),
+    })
     .where(eq(users.id, user.id));
 
   await db.insert(auditLogs).values({
@@ -112,6 +122,16 @@ authRoutes.post('/login', async (c) => {
     entityId: user.id,
     ipAddress: c.req.header('cf-connecting-ip') ?? null,
   });
+
+  if (rehashed) {
+    await db.insert(auditLogs).values({
+      actorUserId: user.id,
+      action: 'auth.password_rehashed',
+      entityType: 'user',
+      entityId: user.id,
+      ipAddress: c.req.header('cf-connecting-ip') ?? null,
+    });
+  }
 
   setCookie(c, SESSION_COOKIE_NAME, token, {
     httpOnly: true,

@@ -3,12 +3,13 @@
  * Creates a user, hashing the password with the exact same scheme the Worker
  * verifies against (src/api/lib/password.ts):
  *
- *   pbkdf2$sha256$100000$<salt base64url>$<digest base64url>
+ *   $argon2id$v=19$m=19456,t=2,p=1$<salt base64url>$<digest base64url>
  *
- * The work factor matches PASSWORD_ITERATIONS in src/api/lib/password.ts and must
- * stay at or below 100,000: Cloudflare's WebCrypto rejects higher counts at
- * runtime ("iteration counts above 100000 are not supported"), even though a
- * local workerd will happily compute them.
+ * Both sides call `@noble/hashes` with identical parameters rather than each
+ * carrying its own derivation, because they diverged once: this script used to
+ * mint PBKDF2 digests at a work factor Cloudflare's WebCrypto refuses to compute,
+ * so every account it created was impossible to sign in with. Importing one
+ * implementation is what prevents a repeat.
  *
  * This exists because a fresh database has no users, so there is no way to log
  * in. Run it once after the first migration to create the founding Admin.

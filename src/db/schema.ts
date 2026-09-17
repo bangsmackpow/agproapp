@@ -79,7 +79,7 @@ export const users = sqliteTable(
   {
     id: primaryId(),
     email: text('email').notNull(),
-    /** PBKDF2 / scrypt digest — never the plaintext password. */
+    /** Argon2id digest — never the plaintext password. Legacy PBKDF2 digests are accepted and upgraded on sign-in. */
     passwordHash: text('password_hash').notNull(),
     name: text('name').notNull(),
     role: text('role', { enum: USER_ROLES }).notNull().default('sales'),
