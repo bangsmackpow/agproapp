@@ -792,7 +792,12 @@ describe('sign-in brute-force protection', () => {
     // The lockout is real, not just failure counting: the right password is
     // refused while the window is open.
     expect((await attempt(LOCKABLE_EMAIL, PASSWORD)).status).toBe(429);
-  });
+    // Generous on purpose. This makes MAX_FAILURES_PER_EMAIL + 2 genuine sign-in
+    // attempts and each one deliberately pays a full Argon2id verification, so it
+    // is seconds of hashing by design. Argon2id is roughly four times slower than
+    // the PBKDF2 it replaced, which left this sitting on the default five-second
+    // budget — a coin flip is not a useful thing for a test to be.
+  }, 30_000);
 
   it('does not lock unrelated accounts', async () => {
     expect((await attempt('sales@agpro.test', PASSWORD)).status).toBe(200);
