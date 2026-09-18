@@ -61,6 +61,8 @@ Repo-wide, there is no CSP, `X-Frame-Options`, `frame-ancestors`, `X-Content-Typ
 
 **Remediation:** a header block on every response (a small wrapper in `workers/app.ts`, or a Hono middleware plus a `headers` export in `root.tsx`): `X-Frame-Options: DENY`, `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; …`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, HSTS at the edge. Add `Cache-Control: no-store` to authenticated HTML and print pages.
 
+**One interaction to plan for:** the theme is resolved by an inline `<script>` in `app/root.tsx` (see `app/components/theme.tsx`) so the page never flashes the wrong colours. A `script-src 'self'` policy blocks it, so the CSP needs a nonce/hash for that one script — or move the identical logic to a same-origin `/theme.js`, which needs no exemption.
+
 **Suggested first task** — mechanical, and it protects the money screens immediately.
 
 ### M3. Invoice email: any recipient, unlimited sends
@@ -114,7 +116,7 @@ So `sales` reaches the same outcome by a different verb, and `app/lib/customer-p
 - **Sessions are correct.** 32 bytes CSPRNG, only the SHA-256 digest persisted, httpOnly + Secure in production + Lax + path=/ + maxAge, no `Domain`, no fixation, server-side logout, and changing a password revokes all sessions.
 - **Passwords.** Argon2id with per-digest parameters bounded above so a corrupt digest fails closed, constant-time comparison via the platform primitive, automatic rehash on sign-in, and a dummy hash with matching cost so the unknown-account path does not leak existence by timing.
 - **Login abuse.** Per-email (10) and per-IP (50) rolling windows checked **before** the account lookup; generic 401; lockouts audited; unknown and wrong-password are indistinguishable.
-- **XSS.** No `dangerouslySetInnerHTML`, `innerHTML`, `eval` or `document.write` anywhere; SSR and print output go through React escaping; outbound email HTML escapes every interpolated value.
+- **XSS.** The only `dangerouslySetInnerHTML` is one static inline `<script>` in `app/root.tsx` that resolves the theme before paint — a module constant with no interpolation, so there is no injection surface. There is no `innerHTML`, `eval` or `document.write` anywhere. SSR and print output go through React escaping; outbound email HTML escapes every interpolated value.
 - **No email header injection.** `to` is validated as an email and passed to the provider's JSON API, not raw SMTP; subjects are built from server-side values.
 - **Seed-compliance gate is applied on both send and email delivery**; a zero-total invoice cannot be sent.
 - **Check numbering cannot duplicate** — atomic `UPDATE … RETURNING` plus a unique index.
@@ -127,16 +129,24 @@ So `sales` reaches the same outcome by a different verb, and `app/lib/customer-p
 
 ---
 
-## 6. Functional gaps noticed while doing the UI work
+## 6. Functional gaps and open items
 
 Not security — these block normal operation and are worth knowing before testing:
 
-1. **Nothing ever sets `verified = true` on a compliance log.** Imports only insert `verified: false`, and no UI or CLI verifies one. **Regulated-seed invoices therefore cannot be sent at all** — the gate correctly refuses them. This is the single biggest functional blocker, and H3 must be fixed in the same change.
-2. **The 2027 price sheet has no prices.** 7 programs / 47 ingredients imported with zero prices, so program lines are refused by design until prices are loaded.
+1. **Nothing ever sets `verified = true` on a compliance log.** Imports only insert `verified: false`, and no UI or CLI verifies one. **Regulated-seed invoices therefore cannot be sent at all** — the gate correctly refuses them. This is the single biggest functional blocker, and **H3 must be fixed in the same change** as whatever builds the verification step.
+2. **The 2027 sheet still has no real prices.** Placeholder prices are now seeded (`pnpm prices:test`) so invoicing can be exercised, and they are tagged `TEST DATA (placeholder)` and removable with `pnpm prices:test -- --clear`. They must be cleared before real prices are loaded, or a placeholder reads as a quote someone entered.
 3. **Customer fields cannot be cleared.** `parseCustomerForm` omits empty strings so a PATCH leaves the field untouched, and the API's optional text fields accept a string or nothing — not `null`. Clearing a phone number or address line is currently impossible.
-4. **No user management screen.** `admin:users` exists and `pnpm user:create` covers the CLI, but there are no `/api/users` routes or UI.
-5. **`reports:read` and some schemas are defined but unused** (`invoiceUpdateSchema`, `checkStatusSchema`) — dead surface, no exposure.
-6. **R2 (`agpro-documents`) is provisioned but nothing writes to it.** Document storage is unbuilt.
+4. **`PATCH /api/customers/:id` cannot be told to change only `isActive`** without also sending the rest of the payload — see M4.
+5. **No user management screen.** `admin:users` exists and `pnpm user:create` covers the CLI, but there are no `/api/users` routes or UI.
+6. **`reports:read` and some schemas are defined but unused** (`invoiceUpdateSchema`, `checkStatusSchema`) — dead surface, no exposure.
+7. **R2 (`agpro-documents`) is provisioned but nothing writes to it.** Document storage is unbuilt.
+8. **Nine product columns are never read** and are no longer rendered on the form: `category`, `pesticideType`, `seedTraitSystem`, `packageSize`, `activeIngredient`, `density`, `stateRestrictions`, `brand`, `markupPercent`. See the README's catalogue note. They are kept deliberately; the import parser still writes some of them.
+
+### Closed since this document was written
+
+- ~~No customer edit screen~~ — `customers/new` and `customers/:id` now exist, sharing one `CustomerForm`.
+- ~~No way to test invoicing without prices~~ — see item 2; placeholders are seeded and reversible.
+- ~~`requireUser` builds its `?next=` login redirect from `pathname`~~ — still open, but noted here rather than lost: an expired session on a client-side data request produces `next=/customers/<id>.data`, which lands on a JSON payload rather than a page. Low impact, one-line fix.
 
 ---
 
@@ -145,15 +155,28 @@ Not security — these block normal operation and are worth knowing before testi
 This project's gates, in order:
 
 ```
-rtk pnpm typecheck     # react-router typegen + tsc
-rtk pnpm test          # vitest in workerd against a real D1
+rtk pnpm typecheck     # react-router typegen + tsc, app + config projects
+rtk pnpm test          # vitest in workerd against a real D1 — 188 tests
 rtk pnpm smoke         # builds, boots a preview, signs in, walks every screen
 ```
 
-`smoke` is the only gate that sees the React Router SSR layer — three production bugs
-came from that blind spot, so **add a smoke check for any fix that touches a form or
-route**, not just a unit test. The service-level suites live in `src/services/*.test.ts`
-and run against a real D1 via `cloudflare:test`.
+`smoke` is the only gate that sees the React Router SSR layer. Three production bugs
+came from that blind spot, so **add a smoke check for any fix that touches a form or a
+route**, not just a unit test.
 
-Before pushing anything containing a migration: `rtk pnpm db:migrate:remote`
-(CI has no D1 permission — see `AGENTS.md`).
+Two traps that cost real time:
+
+- **Load a record page as a client-side request as well as a document.** React Router
+  appends `.data` on client navigation, so a loader parsing the request URL sees
+  `<id>.data`. The document request still passes, so a page check that only does a plain
+  GET proves nothing. `checkPage` in `scripts/smoke.mjs` asserts both for this reason.
+- **An unticked checkbox and an absent field are both missing from `FormData`.** If a
+  form omits a field, the parser must treat it as "unchanged" — and checkboxes need a
+  paired hidden `off` input so unticked stays distinguishable from removed.
+
+Test files live beside what they cover: `src/services/*.test.ts` (services, real D1 via
+`cloudflare:test`), `src/api/lib/*.test.ts` (crypto and schemas), `app/lib/*.test.ts`
+(form payload contracts) and `test/api.test.ts` (routes and RBAC over the Hono app).
+
+**Before pushing anything containing a migration:** `rtk pnpm db:migrate:remote`.
+CI has no D1 permission, so a build cannot apply or verify one — see the README's **Deployment** section.

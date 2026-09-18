@@ -38,7 +38,7 @@ Attempted access to the checkwriting module by `sales` or `manager` is blocked i
 
 | Phase | Scope | State |
 |---|---|---|
-| **1** | D1 schema (29 tables), RBAC, pricing engine, worker/config scaffold, migrations + reference seed | ✅ Complete |
+| **1** | D1 schema (33 tables), RBAC, pricing engine, worker/config scaffold, migrations + reference seed | ✅ Complete |
 | **2** | Hono gateway: auth, RBAC middleware, CRM/catalog/inventory/invoice/check routes, document parse engine + review queue | ✅ Complete |
 | **3** | Cross-platform UI: React Router SSR + Tailwind, login, role-aware shell, and screens for CRM, inventory, invoicing, checkwriting and imports | ✅ Complete |
 | **4** | Print output (invoice letter format, positioned three-part cheque) + electronic invoice delivery | ✅ Complete |
@@ -62,7 +62,7 @@ logic on the money paths.
 | Object storage | Cloudflare R2 (source documents) |
 | Cache / rate limiting | Cloudflare KV |
 | Language | TypeScript (strict) |
-| UI | React Router v7+ (framework mode, SSR) + Tailwind CSS v4; shadcn/ui-idiom primitives |
+| UI | React Router v8 (framework mode, SSR) + Tailwind CSS v4; local primitives in one module, themed light/dark by CSS tokens |
 | Tests | Vitest + `@cloudflare/vitest-pool-workers` |
 
 ---
@@ -93,7 +93,7 @@ There is one deployment target. Locally you run against a local D1; the top-leve
 
 ### Configuration
 
-`wrangler.toml` declares three bindings, mirrored across `staging` and `production` environments:
+`wrangler.toml` declares one deployment target and three bindings:
 
 | Binding | Type | Purpose |
 |---|---|---|
@@ -101,13 +101,17 @@ There is one deployment target. Locally you run against a local D1; the top-leve
 | `DOCUMENTS` | R2 | Scanned BOLs, vendor invoices, price sheets |
 | `KV` | KV | Session and rate-limit caching |
 
+There are **no `[env.*]` sections** — one Worker, one database, one set of bindings. `APP_NAME`, `APP_REGION`, `ENVIRONMENT`, `MAIL_FROM` and `MAIL_REPLY_TO` are plain vars in the same file.
+
 Local secrets live in `.dev.vars` (gitignored). Copy the template:
 
 ```bash
 cp .dev.vars.example .dev.vars
 ```
 
-Remote secrets are set with `wrangler secret put SESSION_SECRET --env production`.
+The only secret the application reads is `MAIL_PROVIDER_API_KEY`, and it is optional — without it, delivery is recorded but not transmitted, and the app reports `skipped` rather than claiming success. Set it remotely with `wrangler secret put MAIL_PROVIDER_API_KEY`.
+
+Sessions do **not** use a signing secret: a 32-byte random token is issued and only its SHA-256 digest is stored, so there is nothing to sign and nothing to leak.
 
 ---
 
@@ -120,12 +124,31 @@ pnpm db:generate            # schema change -> new SQL migration
 pnpm db:migrate:local       # apply to the local sqlite instance
 pnpm db:seed:local          # load idempotent reference data
 
-pnpm db:migrate:staging     # or :production, against remote D1
-pnpm db:seed:staging
+pnpm db:migrate:remote      # apply to the deployed D1
+pnpm db:seed:remote         # reference data: units registry, invoice sequence, vendors
+pnpm migrate:check          # list pending migrations without applying
 pnpm db:studio              # Drizzle Studio (needs CLOUDFLARE_* env vars)
 ```
 
+Two of these are worth the extra keystrokes: **`db:migrate:remote` before pushing** anything that carries a migration (see Deployment — CI has no D1 permission), and **`db:seed:remote` is not run by any deploy path**, so a fresh database needs it by hand.
+
 Reference data lives in [`seed/0001_reference.sql`](seed/0001_reference.sql) rather than in `migrations/`, so Drizzle's generated migration sequence stays untouched. Every statement is `INSERT OR IGNORE`, so re-running is safe.
+
+One exception: the **customer account-number sequence is seeded by a migration**, not by the reference seed. Invoice numbering depends on the seed, which means a database that has been migrated but not seeded cannot write an invoice at all — a trap worth not repeating. Customer numbers cannot fall into it.
+
+### Prices
+
+The 2027 import brought in 7 programs and 15 products with **no prices at all**, and the composer refuses any line it cannot price. Until the real sheet is loaded, placeholder prices can be seeded so invoicing is testable:
+
+```bash
+pnpm prices:test                      # local
+pnpm prices:test -- --remote          # the deployed D1
+pnpm prices:test -- --remote --clear  # remove every placeholder
+```
+
+Costs are round numbers derived from the program name, and each program is priced against all four tiers from the seeded multipliers. Prices are dated **in the past on purpose**: `findProgramPrice` resolves a price effective on the invoice *issue date*, which defaults to today, so a 2027-dated price would be invisible to an invoice raised now.
+
+Every row it writes is tagged `TEST DATA (placeholder)`, and the product columns it fills are recorded in `product_costs`, so `--clear` removes **exactly** what it added and leaves anything entered since. Run the clear before real prices go in, or a placeholder reads as a quote someone entered.
 
 ### Creating the first user
 
@@ -160,9 +183,9 @@ Per-unit *rates* that are genuinely fractional in vendor data (e.g. `$34.632/oz`
 
 ## Domain model
 
-The schema is in [`src/db/schema.ts`](src/db/schema.ts) — 29 tables grouped as auth/access, CRM, vendors & ingestion, catalogue & inventory, pricing engine, accounts payable, invoicing, seed compliance, and banking.
+The schema is in [`src/db/schema.ts`](src/db/schema.ts) — 33 tables grouped as auth/access, CRM, vendors & ingestion, catalogue & inventory, pricing engine, accounts payable, invoicing, seed compliance, and banking.
 
-Three modelling decisions are worth knowing before reading the code.
+A few modelling decisions are worth knowing before reading the code.
 
 ### Programs are the sellable unit, not products
 
@@ -202,6 +225,22 @@ That already works, because `oz` and `gal` are both volume and convert through t
 
 `checks` carries a unique index over `(bank_account_id, check_number)`. Numbers are handed out by an atomic `UPDATE bank_accounts SET next_check_number = next_check_number + 1 … RETURNING` inside the same batch as the insert. Combined with D1's single-primary write serialization, a duplicate check number cannot be issued even under concurrent requests — verified by test.
 
+### The catalogue is wider than the form
+
+`products` carries far more columns than the form asks for, most of them inherited from the 2027 price-sheet import. The form asks for seven: SKU, name, description, division, vendor, unit and cost.
+
+Nine columns are **never read by any code**: `category`, `pesticideType`, `seedTraitSystem`, `manufacturer`, `packageSize`, `activeIngredient`, `density`, `stateRestrictions` and `markupPercent`. The similarly-named `markupPercent()` in the pricing engine is a different thing — it computes margin from price and cost for an invoice line and does not touch the column.
+
+They are kept rather than dropped and simply not rendered. Keeping them is reversible and the import parser still writes several; dropping them needs a destructive migration for no gain while nothing reads them. Watch for stale hints in that area: `density` was labelled "used to convert between weight and volume" and never was — conversion uses the unit registry's dimensions.
+
+`description` is **internal only**. Invoice lines describe themselves from the product *name*, so nothing here reaches a customer-facing document.
+
+### Customer numbers are allocated, not typed
+
+`customers.account_number` used to be entered by hand, which made it something people chose and could collide on. It now comes from `customer_sequences` as `AGP-057` — three digits, matching the numbers already in service — and is **absent from both the create and update schemas**, so a client can neither supply one nor renumber an account. Zod strips unknown keys, so a supplied value is ignored rather than rejected.
+
+Both this and check numbering allocate with an atomic `UPDATE … RETURNING`, so concurrent creates cannot be handed the same number. A failed create or a deleted customer burns a number, so the sequence will show gaps; that is inherent to allocated identifiers.
+
 ---
 
 ## API
@@ -215,9 +254,9 @@ All routes other than health require a session cookie. Permission shown is the m
 | `POST /api/auth/logout` | session | Revokes the session server-side |
 | `GET /api/auth/me` | session | Current user, without the password digest |
 | `POST /api/auth/change-password` | session | Revokes every other session for the account |
-| `GET/POST /api/customers`, `GET/PATCH/DELETE /api/customers/:id` | `crm:read` / `crm:write` / `crm:delete` | CRM; delete is a deactivation |
+| `GET/POST /api/customers`, `GET/PATCH/DELETE /api/customers/:id` | `crm:read` / `crm:write` / `crm:delete` | CRM; delete is a deactivation. **The account number is allocated server-side from `customer_sequences` and cannot be supplied or changed** |
 | `GET /api/pricing/tiers` | `pricing:read` | Active margin tiers for the composer |
-| `GET/POST /api/products`, `GET/PATCH /api/products/:id` | `inventory:read` / `inventory:write` | Catalogue, searchable by name, SKU, brand or EPA number |
+| `GET/POST /api/products`, `GET/PATCH /api/products/:id` | `inventory:read` / `inventory:write` | Catalogue, searchable by name, SKU, vendor, description or EPA number |
 | `GET/POST /api/inventory/lots` | `inventory:read` / `inventory:write` | Lot-level stock |
 | `POST /api/inventory/lots/:id/adjust` | `inventory:write` | Relative adjustment, applied atomically |
 | `GET/POST /api/drone-units` | `inventory:read` / `inventory:write` | Serialized drone inventory |
@@ -291,11 +330,20 @@ Detection is content-based, not filename-based, and a document no parser recogni
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 99 tests
+pnpm test           # vitest run — 188 tests
 pnpm test:watch     # watch mode
 pnpm typecheck      # react-router typegen + tsc, app + config projects
 pnpm typegen        # regenerate .react-router/types
+pnpm smoke          # builds, boots a preview, signs in, walks every screen
 ```
+
+`pnpm smoke` is not optional garnish. The unit suite runs against the API entry point **inside workerd** and cannot see the React Router SSR layer, and three separate production bugs came from exactly that blind spot: a session cookie that was never relayed, a sign-out action on a pathless layout, and invoice creation failing validation because a form sent a field the schema rejected.
+
+It covers what the unit suite structurally cannot:
+
+- **Every screen as both a document and a client-side data request.** React Router appends `.data` when navigating on the client, so a loader that derives an id from the request URL sees `<id>.data` — the document request still succeeds, and a broken record page looks fine until someone opens a record and gets an error *after* the save. Both forms are asserted for the product, customer and invoice record pages.
+- **The invoice form submitted the way a browser submits it** — urlencoded to the route action — then read back to confirm the line is described by the product rather than left blank.
+- **Teardown is verified**: it removes the records it created and the run is repeatable.
 
 Tests run **inside workerd** via `@cloudflare/vitest-pool-workers`, so they exercise the real runtime, the real Hono app and a real per-run D1 with the migrations applied. There is no mocking layer between the tests and production behaviour.
 
@@ -310,6 +358,10 @@ Coverage is deliberately weighted towards the things that lose money or break th
 - **RBAC** — sales blocked from inventory writes and from importing; managers allowed; checkwriting denied to both sales and managers.
 - **Check numbering** — strictly increasing, and five concurrent requests produce five distinct numbers.
 - **The Iowa seed gate** — a regulated seed invoice cannot leave Draft until its BOL/CMR and Order Number tokens are recorded *and* verified.
+- **Invoice line descriptions** — the schema and service accept the payload the form actually produces, and the server derives the description from the program or product rather than trusting the caller. This exists because every invoice once failed validation on an empty description while the whole suite stayed green.
+- **The product form payload** — an absent field means "leave it alone", for text, checkboxes and list values alike. Hiding a field from the form must never clear the stored value, which is how `isRegulatedSeed` would otherwise be silently disarmed.
+- **Account numbers** — allocated from a sequence, zero-padded, never repeating, distinct under concurrent calls, and not settable by a client.
+- **Passwords** — Argon2id at the current parameters, the legacy PBKDF2 format still verifying, and over-strength digests failing closed rather than throwing.
 
 ---
 
@@ -321,29 +373,40 @@ workers/
 app/                     React Router UI
 ├── root.tsx             Document shell + error boundary
 ├── routes.ts            Route table
-├── app.css              Tailwind v4 entry and design tokens
-├── components/ui.tsx    Shared primitives (button, field, card, table, badge…)
+├── app.css              Tailwind v4 entry: light/dark design tokens
+├── components/          ui.tsx primitives, theme toggle + resolver, forms, confirm
 ├── lib/
 │   ├── api.server.ts    Calls the Hono app in-isolate; session and RBAC helpers
+│   ├── *-payload.server.ts  Form -> API payload parsing, shared by create and edit
 │   └── utils.ts         Class merging and money/date formatting
-└── routes/              login, shell, dashboard, customers, inventory,
-                         invoices, invoice-detail, checks, imports,
-                         invoice-print, check-print
+└── routes/              login, shell, dashboard, customers, customer-new,
+                         customer-detail, inventory, inventory-new,
+                         product-detail, invoices, invoice-new, invoice-detail,
+                         checks, imports, audit, invoice-print, check-print
 src/                     API and domain layer
 ├── worker.ts            API-only entry, used by the test harness
 ├── env.ts               Bindings (generated) + Hono environment
 ├── shared/              Domain enums, RBAC matrix, pricing helpers, cheque template
 ├── db/                  Drizzle schema, client factory, driver-error classification
 ├── api/                 Hono app, middleware, request schemas, routes
-└── services/            Pricing, invoicing, checkwriting, imports, parsers,
-                         mailer, invoice email
-scripts/create-user.mjs  Bootstrap CLI for the founding Admin
+└── services/            Pricing, invoicing, inventory, customers, checkwriting,
+                         imports, parsers, mailer, invoice email
+scripts/                 CLIs: create-user, import-prices, seed-test-prices,
+                         audit-archive, smoke
 migrations/              Drizzle-generated SQL migrations
 seed/                    Idempotent reference data
 test/                    Runtime integration tests (workerd + D1)
-worker-configuration.d.ts  Generated by `pnpm types` — do not edit by hand
-docs/                    Local source documents (images/XLSX are gitignored)
+docs/                    Design and review notes (markdown, versioned) plus the
+                         source images and workbooks they came from (gitignored)
 ```
+
+### Documentation
+
+| Document | What it is |
+|---|---|
+| `docs/IMPLEMENTATION-REVIEW.md` | How the build went against the original specification: what was added, what was deliberately left out, and where a better way exists |
+| `docs/COST-AND-LIMITS.md` | Measured usage against Cloudflare's D1 and Workers limits, with the headroom that remains |
+| `docs/SECURITY-TODO.md` | **Read before any security work.** Deferred findings, plus a list of what was verified as already handled — start there, or you will re-derive it |
 
 ### How the UI talks to the API
 
@@ -375,12 +438,30 @@ There is **no D1 permission** in that list, so `wrangler d1 migrations apply --r
 
 To connect the repository: leave the root directory empty (`wrangler.toml` is at the repo root) and set the deploy command to `pnpm run deploy`.
 
-Migrations run inside `ship`, but **seeds do not**. Reference data and the units registry are applied separately and deliberately:
+Migrations run inside `ship`, but **seeds do not**. Reference data and the units registry are applied separately and deliberately — a fresh database needs `pnpm db:seed:remote` by hand, or it starts with no units, no price tiers and no invoice sequence.
 
-Two things to know:
+Two things to know about configuration:
 
 - Run `pnpm types` after editing `wrangler.toml`. It regenerates `worker-configuration.d.ts`, which is where the binding types come from — bindings therefore cannot drift from the configuration.
 - `compatibility_date` is pinned to the newest date supported by the `workerd` binary shipped with `@cloudflare/vitest-pool-workers`, so dev, test and production all execute identical runtime behaviour. Raise it deliberately, in step with a dependency update.
+
+---
+
+## Interface
+
+The look is a working decision, not a preference: a tool opened many times a day should be quiet, dense and familiar. It follows GitHub's structure — neutral surfaces separated by 1px rules rather than floating cards, a 6px corner radius, and the system font stack, so there is no webfont to download and the app starts instantly.
+
+- **Browse screens scan; edit screens carry the detail.** A list shows the columns you read and exactly one primary action. Every optional field lives on the record's own screen, where someone has already chosen to work on that record. Creating a product, a customer and an invoice each got their own route for this reason — a full form parked beneath a list competes with the job the list is for.
+- **Dense by default, and it fills the width it has.** Controls are 32px, table rows sit at their tightest comfortable height, and there are no shadows — a 1px rule does the separating. A record page splits two-thirds/one-third, with the main panel claiming two columns so a third column never sits empty beside it.
+- **A single accent, spent on meaning.** Chrome uses GitHub's blue: the one primary action per screen, links, the active nav item and focus rings. Destructive buttons use a separate, darker red *emphasis* token, kept apart from the lighter red that signals danger in text and borders — one value cannot be legible both behind white button text and as a warning on a dark canvas. Status is a coloured dot followed by the word, not a filled pill; `Badge` is for categories.
+- **Light, dark or auto, chosen by the user.** Colour is a token layer — light values in `@theme`, the same names overridden under `[data-theme='dark']` — so components carry no `dark:` variants and a re-theme stays in one file. The preference is per browser (`localStorage['agpro-theme']`) and applied by a script in the document head *before first paint*, so there is no flash of the wrong theme. `auto` follows the operating system and falls back to local time (dark from 19:00 to 06:00) only when the platform reports no preference. Light is the default when nothing is stored.
+- **Print is outside the theme.** The invoice and cheque keep their own white-and-brand-green palette whatever the screen is doing, because they are physical documents; the brand green survives there even though the app chrome is blue.
+- **A field the form does not render must not be submitted.** `parseProductForm` and `parseCustomerForm` drop absent values, so removing an input from the form leaves the stored value alone. Checkboxes pair with a hidden `off` input, because an unticked box is *also* absent and the two cases have to stay distinguishable — without that, hiding a checkbox silently resets it.
+
+Two implementation rules, each of which has already cost a production bug:
+
+- **Read a record id from route params, never from the request URL.** React Router appends `.data` when navigating on the client, so `pathname.split('/').pop()` yields `<id>.data` and the loader asks the API for a record that does not exist. The document request still succeeds, so the page appears fine until someone opens a record — the customer saved, then an error.
+- **Never offer a control the API rejects.** Sortable columns exist only where the endpoint whitelists a sort key, and filters only where the query schema accepts them. A sort link on a non-whitelisted column sends a request the server refuses.
 
 ---
 

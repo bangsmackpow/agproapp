@@ -23,11 +23,17 @@ The system is **functionally complete against the original specification, with t
 | Print: invoice letter + three-part check | ✅ Complete; check needs physical calibration |
 | Print-optimised check output, serialised numbering | ✅ Complete; numbering proven under concurrency |
 | Drizzle + D1 + Hono + Cloudflare Workers | ✅ Complete as specified |
-| **Price sheet loaded so programs can be sold** | 🔴 **Not done — the biggest gap** |
+| **Price sheet loaded so programs can be sold** | 🟡 **Imported** — 7 programs, 47 ingredients, 15 products. The sheet itself carries no figures, so prices are still missing |
+| Regulated-seed invoices actually sendable | 🔴 Not yet — nothing sets `verified = true` on a compliance log, so the gate correctly refuses every one |
 | User management UI | 🔴 Not built (CLI only) |
 | Password reset by email | 🔴 Not built (CLI only) |
 
-**The one thing blocking real use:** the 1,039-row price sheet is not imported, so no application program has a price and the composer refuses program lines. Everything else is usable today.
+**The things blocking real use**, in order:
+
+1. **No prices.** The import is done; the 2027 sheet's price cells are `0`. Until real figures are entered, placeholder prices (`pnpm prices:test`, reversible) let the invoicing flow be tested end to end.
+2. **Regulated-seed invoices cannot be sent at all** — not because the gate is broken, but because nothing ever marks a compliance log verified. Building that step is the largest remaining functional gap, and it must be paired with the access-control fix noted in `SECURITY-TODO.md` (H3).
+
+Everything else is usable today.
 
 ---
 
@@ -42,7 +48,7 @@ Every specified technology was used as written. Nothing was substituted.
 | Database | D1 | Cloudflare D1 | — |
 | ORM | Drizzle | Drizzle ORM + Kit | `0.45.2` / `0.31.10` |
 | Auth | Edge JWT **or** Lucid/session tables in D1 | D1 session tables, httpOnly cookie | — |
-| Styling | Tailwind + shadcn/ui | Tailwind v4 (CSS-first) | `4.3.3` |
+| Styling | Tailwind + shadcn/ui | Tailwind v4 (CSS-first) + local primitives in one module | `4.3.3` |
 | Runtime | Cloudflare Workers | Workers, `nodejs_compat` | wrangler `4.133.0` |
 | Language | — | TypeScript strict | `5.9.3` |
 
@@ -78,25 +84,29 @@ One Worker, two responsibilities:
 
 **Key property:** UI loaders call the Hono app *in the same isolate* rather than over HTTP. There is exactly one implementation of every business rule and no second authorisation path. The API remains the authority; hiding a control is a convenience, not a control.
 
-### Data model — 30 tables
+### Data model — 33 tables
 
 | Group | Tables |
 |---|---|
 | Auth & access | `users`, `sessions`, `login_attempts`, `audit_logs`, `company_settings` |
-| CRM | `customers` |
+| CRM | `customers`, `customer_sequences` |
 | Vendors & ingestion | `vendors`, `documents`, `import_batches`, `import_drafts` |
-| Catalogue & inventory | `products`, `product_costs`, `warehouses`, `inventory_lots`, `drone_units` |
+| Catalogue & inventory | `products`, `product_costs`, `units`, `warehouses`, `inventory_lots`, `inventory_movements`, `drone_units` |
 | Pricing engine | `price_tiers`, `application_programs`, `program_ingredients`, `program_prices`, `application_fees` |
 | Accounts payable | `vendor_bills`, `vendor_bill_items` |
 | Invoicing | `invoices`, `invoice_items`, `invoice_sequences`, `invoice_deliveries` |
 | Seed compliance | `iowa_compliance_logs` |
 | Banking | `bank_accounts`, `checks`, `check_allocations` |
 
-**Conventions that prevent whole classes of bug:** money is always integer cents, never a float; timestamps are integer unix milliseconds; primary keys are application-generated UUIDs; enum columns derive from one tuple source in `src/shared/enums.ts`.
+**Conventions that prevent whole classes of bug:** money is always integer cents, never a float; timestamps are integer unix milliseconds; primary keys are application-generated UUIDs; enum columns derive from one tuple source in `src/shared/enums.ts`; stock is an append-only ledger (`inventory_movements`) that is *never* pruned, so a running total is a sum rather than a stored number that can drift.
 
 ### Verification
 
-99 tests, executed **inside workerd against a real D1**, not against mocks. Weighted towards what loses money or breaks a law: check-number uniqueness under concurrency, the Iowa compliance gate, monetary arithmetic, RBAC lockdown, brute-force lockout, parser extraction against fixtures mirroring the real scanned documents.
+188 unit and integration tests, executed **inside workerd against a real D1**, not against mocks — plus a 34-check smoke run that builds the Worker, boots a preview, signs in and walks every screen.
+
+Weighted towards what loses money or breaks a law: check-number and account-number uniqueness under concurrency, the Iowa compliance gate, monetary arithmetic, RBAC lockdown, brute-force lockout, parser extraction against fixtures mirroring the real scanned documents.
+
+The smoke run covers the layer the unit suite structurally cannot reach — React Router SSR. Three production bugs came from that gap (an unrelayed session cookie, a sign-out action on a pathless layout, and invoice creation failing validation), so form and route changes get a smoke check, not only a unit test.
 
 ---
 
@@ -163,25 +173,22 @@ Not in the spec. The Channel BOL carries a **lot number and a `Seed NO.` on ever
 
 ---
 
-## 6. The gap: the price sheet
+## 6. The gap: prices, not the import
 
-**What is missing.** `application_programs`, `program_ingredients` and `program_prices` are empty. The invoice composer will refuse a program line because no price exists for any tier. Only flat products, application fees, and carry items can be sold today.
+**The importer is built and has run.** `pnpm import:prices` parses `2027_chemical_prices.xlsx` and populated **7 programs, 47 program ingredients and 15 products**, with the application-fee table beside the blocks. The block-structure parser, product reconciliation by name, effective dating for coexisting seasons and idempotent re-running all work. Name-spelling reconciliation (`XSAte` vs `Xsate`, `Fulltec` vs `FullTec`) was solved in the importer rather than deferred to a human.
 
-**What is needed to close it:**
+The originally-estimated work — a Node XLSX reader, a block parser, product matching, effective dating, idempotency — is therefore **done**.
 
-1. **An XLSX reader running in Node.** The workbooks are 140 KB and 13 KB; parsing needs a library (`exceljs` or `sheetjs`) and must run where Node APIs exist, so it belongs in a script such as `pnpm import:prices`, not in the Worker.
-2. **A block-structure parser.** The sheets are not tabular. `2027_chemical_prices.xlsx` is a repeating block: a program header row (`CORN (1 PASS)` + the four tier labels), then ingredient rows (name, rate/acre, cost/acre), then a `TOTAL` row carrying the tier prices. The Fungicide sheet adds a package-price list and an application-fee table beside the blocks.
-3. **Product reconciliation.** Program ingredients reference products by name (`Ventas`, `Tenkoz 4L`, `Xsate 53.8%`). These must be matched to `products.sku`/`name` or created. Name spellings are inconsistent across sheets (`XSAte` vs `Xsate`, trailing spaces, `Fulltec` vs `FullTec`).
-4. **Effective dating.** Two sheets cover different seasons (Nov 2024, 2027). Both must coexist via `program_prices.effective_from`.
-5. **Idempotency.** Re-running must update rather than duplicate, keyed on program name + season + tier.
+**What remains is that the sheet carries no prices.** The 2027 cells are `0`, which reads as "not yet priced" rather than "free", so `program_prices` is empty and the composer correctly refuses every program line. Product lines are refused as well, because no product carries a cost or a tier price.
 
-**Blocking questions for the client:**
+Until the real figures arrive, `pnpm prices:test` seeds clearly-tagged placeholders so the whole invoicing flow — draft, compliance gate, send, payment, print — can be exercised. They are dated in the past so they resolve against an invoice raised today, and removed with `pnpm prices:test -- --clear`. **They must be cleared before real prices are loaded**, or a placeholder reads as a quote someone entered.
 
-- Which sheet is authoritative for the coming season — `AG Pro 2027` only, with `Ag Pro Price Sheet Nov 2024` kept as history?
-- Several 2027 cells are `0`, which reads as "not yet priced" rather than "free". Skip those, or import as zero and let the composer refuse them?
-- Should unrecognised ingredient names **create** catalogue products automatically, or should the import report them for a human to map first?
+**Still to decide when the real sheet is priced:**
+
+- Should a `0` cell be skipped as "not yet priced", or imported as a genuine zero?
 - What is the Fungicide `Package` list (`Veltyma 326.70`, `Traro Pro 148.50`) — a flat price for a whole package, sold as one unit?
-- The 2027 sheet arithmetic is `cost × multiplier`; the Fungicide sheet uses different, slightly inconsistent multipliers (~1.10/1.12/1.24). Should fungicide prices be imported as **absolute** figures rather than recomputed from the multiplier?
+- The 2027 arithmetic is `cost × multiplier`; the Fungicide sheet uses different, slightly inconsistent multipliers (~1.10/1.12/1.24). Should fungicide prices be imported as absolute figures rather than recomputed?
+- Which sheet is authoritative for the coming season — `AG Pro 2027` only, with the Nov 2024 sheet kept as history?
 
 ---
 
@@ -194,7 +201,7 @@ Honest assessment, ordered by value.
 | **Password hashing** | **Argon2id**, 19 MiB / t=2 / p=1 | Raise the memory cost when CPU budget allows — memory is the parameter that costs an attacker most | Each +1 MiB is roughly linear in login latency at ~341 ms today. Pure-JS `@noble/hashes` is ~4× slower than a WASM build would be, so the same parameters in WASM would buy back headroom |
 | **Auth ownership** | Hand-built sessions | **Better Auth 1.5** — natively supports D1 + Hono, and brings password reset, 2FA, passkeys, OAuth | It takes over the `user`/`session` tables, and our RBAC (and the checkwriting lockdown) hangs off `users.role`, so bridging is real work |
 | **PDF invoices** | HTML + browser print | Server-side PDF generation | HTML print is genuinely simpler and produces a fine document; PDFs only pay off for archival or automated attachment |
-| **Audit granularity** | Row-level: who, what, when | **Field-level before/after** | Needed for the stated use case — tracing an ounce entered instead of a gallon. The table supports it; the writers do not yet capture it |
+| **Audit surfacing** | Field-level before/after of changed fields only, with an Admin viewer at `/audit` | Per-record history on the entity's own page | The data is already captured and queryable and the viewer filters it, so this is convenience rather than capability |
 | **Price import format** | XLSX parsing | Ask the vendors for CSV/API | Bayer/CropScience exposes APIs; the README already flags `cropcience.bayer.com`. Removes the fragile sheet parser entirely for the Channel seed flow |
 | **OCR** | Manual paste of text | Workers AI vision, or a vendor API | Would remove the paste step. Still requires the human review queue behind it |
 | **shadcn/ui** | Primitives in one module | `npx shadcn` per-component files | Cosmetic. The current API surface is already compatible; splitting costs nothing but churn |
@@ -209,8 +216,17 @@ Honest assessment, ordered by value.
 
 ## 8. Recommended next sequence
 
-1. **Price sheet import** — unblocks the core selling flow. Needs the §6 answers. The 2027 programs are imported but carry no prices, so the composer refuses program lines until these land.
-2. **User management screen** — `GET/POST/PATCH /api/users` behind `admin:users`, plus a UI. The RBAC and audit foundations are already there, and `pnpm user:create` covers the CLI path meanwhile.
-3. ~~**Audit: field-level diffs + viewer**~~ — done. `recordChange` stores before/after of changed fields only, redacts credential-shaped keys, and writes nothing when nothing changed; the Admin-only viewer at `/audit` filters and renders the diffs.
+1. **The real 2027 prices** — unblocks the core selling flow. The importer has run; the sheet simply has no figures in it yet. Placeholder prices (`pnpm prices:test`) unblock *testing* meanwhile and must be cleared before the real ones load. Needs the §6 answers.
+2. **Compliance-log verification** — nothing in the codebase ever sets `verified = true`, so **regulated-seed invoices cannot be sent at all**, however correctly the gate is working. This is the largest functional blocker. The dependent access-control finding (H3 in `SECURITY-TODO.md`) must be fixed in the same change, or the verification step inherits a gate that can be satisfied by any verified log rather than the right one.
+3. **User management screen** — `GET/POST/PATCH /api/users` behind `admin:users`, plus a UI. The RBAC and audit foundations are already there, and `pnpm user:create` covers the CLI path meanwhile.
 4. **Password reset by email** — token table, request/confirm endpoints, reset page. The mailer exists, including its honest "not configured" state. The Argon2id migration means this is now a convenience rather than a prerequisite for changing algorithms.
-5. ~~**Argon2id migration**~~ — done, and it needed no forced reset. The digest records its own algorithm, so a successful sign-in silently rehashes legacy PBKDF2 accounts to Argon2id using the password just verified. Measured at ~341 ms/hash in `workerd`.
+5. **Security hardening** — `docs/SECURITY-TODO.md`, in the order given there. M2 (security headers) is mechanical and protects the money screens today, so it is the sensible first item.
+
+### Done since this review was written
+
+- ~~**Price sheet import**~~ — built and run: 7 programs, 47 ingredients, 15 products.
+- ~~**Audit: field-level diffs + viewer**~~ — `recordChange` stores before/after of changed fields only, redacts credential-shaped keys, and writes nothing when nothing changed; the Admin-only viewer at `/audit` filters and renders the diffs.
+- ~~**Argon2id migration**~~ — done, with no forced reset. The digest records its own algorithm, so a successful sign-in silently rehashes legacy PBKDF2 accounts using the password just verified. ~341 ms/hash in `workerd`.
+- ~~**Deployment path**~~ — CI (`pnpm deploy`) and local (`pnpm ship`) are now distinct, because the Workers Builds token has no D1 permission and cannot apply migrations.
+- ~~**Customer account numbers**~~ — now allocated from a sequence rather than typed.
+- ~~**Interface pass**~~ — browse separated from edit, status reduced to a dot and a word, then re-themed to GitHub's structure: neutral surfaces and 1px rules, 6px corners, the system font stack, and a per-browser light/dark/auto mode resolved before first paint. The brand palette now survives only on the printed documents.
