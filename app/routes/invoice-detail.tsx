@@ -228,8 +228,13 @@ export default function InvoiceDetailRoute() {
         </div>
       ) : null}
 
+      {/*
+        Two children across three columns left the third column empty and
+        squeezed the line items into one narrow track. The detail card claims
+        two columns; the right rail keeps the third.
+      */}
       <div className="grid gap-6 xl:grid-cols-3">
-        <div className="rounded-md border border-border">
+        <div className="min-w-0 rounded-md border border-border xl:col-span-2">
           <CardHeader title="Line items" description={`Pricing tier: ${invoice.pricingTierKey ?? '—'}`} />
           <Table>
             <thead>
