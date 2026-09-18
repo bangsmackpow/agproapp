@@ -2,6 +2,7 @@ import { Form, NavLink, Outlet } from 'react-router';
 import type { LoaderFunctionArgs } from 'react-router';
 
 import { Badge, Button } from '../components/ui';
+import { ThemeToggle } from '../components/theme';
 import { getEnv, requireUser, type SessionUser } from '../lib/api.server';
 import { ROLE_LABELS, can, canAccessCheckwriting } from '../../src/shared/rbac';
 import { cn } from '../lib/utils';
@@ -38,7 +39,14 @@ export default function ShellRoute({ loaderData }: { loaderData: { user: Session
   const items = navItems(user).filter((item) => item.show);
 
   return (
-    <div className="min-h-screen lg:flex">
+    <div className="min-h-dvh lg:flex">
+      {/* Keyboard users should not have to tab the whole nav on every page. */}
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:border focus:border-border focus:bg-surface focus:px-3 focus:py-1.5 focus:text-sm focus:text-ink"
+      >
+        Skip to content
+      </a>
       <aside className="border-b border-border bg-surface lg:w-60 lg:shrink-0 lg:border-r lg:border-b-0">
         <div className="flex items-center justify-between gap-3 px-4 py-3 lg:block">
           <div className="flex items-center gap-3 lg:block">
@@ -67,7 +75,7 @@ export default function ShellRoute({ loaderData }: { loaderData: { user: Session
                 cn(
                   'flex shrink-0 items-center rounded-md px-3 py-2 text-sm font-medium whitespace-nowrap',
                   isActive
-                    ? 'bg-brand-50 text-brand-900'
+                    ? 'bg-accent-muted font-semibold text-accent-text'
                     : 'text-ink-muted hover:bg-muted hover:text-ink',
                 )
               }
@@ -87,14 +95,17 @@ export default function ShellRoute({ loaderData }: { loaderData: { user: Session
             </Badge>
           </div>
 
-          <Form method="post" action="/logout">
-            <Button type="submit" variant="ghost" size="sm">
-              Sign out
-            </Button>
-          </Form>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <Form method="post" action="/logout">
+              <Button type="submit" variant="ghost" size="sm">
+                Sign out
+              </Button>
+            </Form>
+          </div>
         </header>
 
-        <main className="min-w-0 flex-1 p-4 lg:p-6">
+        <main id="main" tabIndex={-1} className="min-w-0 flex-1 p-4 lg:p-6">
           <Outlet />
         </main>
       </div>

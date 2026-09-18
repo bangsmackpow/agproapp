@@ -114,7 +114,7 @@ export default function DashboardRoute() {
                   <Td>
                     <Link
                       to={`/invoices/${invoice.id}`}
-                      className="tabular font-medium text-brand-700 hover:underline"
+                      className="tabular font-medium text-accent-text hover:underline"
                     >
                       {invoice.invoiceNumber}
                     </Link>

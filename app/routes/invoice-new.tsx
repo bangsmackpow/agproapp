@@ -131,7 +131,7 @@ export default function InvoiceNewRoute() {
         title="New invoice"
         description="Starts as a draft"
         actions={
-          <Link className="text-sm text-brand-700 underline" to="/invoices">
+          <Link className="text-sm text-accent-text underline" to="/invoices">
             Back to invoices
           </Link>
         }

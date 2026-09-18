@@ -98,7 +98,7 @@ export default function CheckPrintRoute() {
     <>
       <div className="no-print flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
         <div className="flex items-center gap-3">
-          <Link className="text-sm text-brand-700 underline" to="/checks">
+          <Link className="text-sm text-accent-text underline" to="/checks">
             Back to checkwriting
           </Link>
           <span className="text-sm text-ink-muted">
@@ -112,7 +112,7 @@ export default function CheckPrintRoute() {
           <button
             type="button"
             onClick={() => window.print()}
-            className="h-9 rounded-md bg-brand-700 px-4 text-sm font-medium text-white"
+            className="h-9 rounded-md bg-accent px-4 text-sm font-medium text-accent-fg"
           >
             Print
           </button>
@@ -149,7 +149,7 @@ export default function CheckPrintRoute() {
         <div className="print-page print-page--positioned" style={cssVars as CSSProperties}>
           {/* Calibration guide only. */}
           <div
-            className="no-print absolute border border-dashed border-red-400"
+            className="no-print absolute border border-dashed border-danger"
             style={{
               left: 'var(--check-left)',
               top: 'var(--check-top)',

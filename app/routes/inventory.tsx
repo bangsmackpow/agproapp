@@ -153,7 +153,7 @@ export default function InventoryRoute() {
           canWrite ? (
             <Link
               to="/inventory/new"
-              className="inline-flex h-8 items-center rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-600"
+              className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent-hover"
             >
               New product
             </Link>
@@ -181,7 +181,7 @@ export default function InventoryRoute() {
             href="/inventory"
             className={
               active === ''
-                ? 'border-b-2 border-brand-700 pb-0.5 font-medium text-ink'
+                ? 'border-b-2 border-accent pb-0.5 font-medium text-ink'
                 : 'pb-0.5 text-ink-muted hover:text-ink'
             }
           >
@@ -193,7 +193,7 @@ export default function InventoryRoute() {
               href={`/inventory?type=${option}`}
               className={
                 active === option
-                  ? 'border-b-2 border-brand-700 pb-0.5 font-medium text-ink capitalize'
+                  ? 'border-b-2 border-accent pb-0.5 font-medium text-ink capitalize'
                   : 'pb-0.5 text-ink-muted capitalize hover:text-ink'
               }
             >
@@ -209,7 +209,7 @@ export default function InventoryRoute() {
             defaultValue={params.get('q') ?? ''}
             placeholder="Search name, SKU, vendor…"
             aria-label="Search catalogue"
-            className="h-7 w-56 rounded-md border border-border bg-white px-2 text-sm placeholder:text-ink-muted focus:border-brand-600 focus:outline-none"
+            className="h-7 w-56 rounded-md border border-border bg-surface px-2 text-sm placeholder:text-ink-muted focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none"
           />
           <button
             type="submit"
@@ -258,7 +258,7 @@ export default function InventoryRoute() {
                   <Td>
                     <Link
                       to={`/inventory/${product.id}`}
-                      className="font-medium text-brand-700 hover:underline"
+                      className="font-medium text-accent-text hover:underline"
                     >
                       {product.name}
                     </Link>

@@ -263,7 +263,7 @@ export default function ImportsRoute() {
                   required
                   rows={10}
                   placeholder="Paste the document text here…"
-                  className="w-full rounded-md border border-border bg-white p-3 font-mono text-xs text-ink"
+                  className="w-full rounded-md border border-border bg-surface p-3 font-mono text-xs text-ink"
                 />
               </Field>
               <Button type="submit" className="w-full" disabled={navigation.state === 'submitting'}>

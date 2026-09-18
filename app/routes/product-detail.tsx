@@ -205,7 +205,7 @@ export default function ProductDetailRoute() {
           <div className="flex items-center gap-3">
             {product.isActive ? null : <Status tone="danger">Inactive</Status>}
             {product.isRegulatedSeed ? <Badge tone="warning">Regulated seed</Badge> : null}
-            <Link className="text-sm text-brand-700 underline" to="/inventory">
+            <Link className="text-sm text-accent-text underline" to="/inventory">
               All inventory
             </Link>
           </div>

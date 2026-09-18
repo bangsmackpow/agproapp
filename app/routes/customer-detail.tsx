@@ -55,7 +55,7 @@ export default function CustomerDetailRoute() {
         title={customer.name ?? 'Customer'}
         description={[customer.accountNumber, location].filter(Boolean).join(' · ')}
         actions={
-          <Link className="text-sm text-brand-700 underline" to="/customers">
+          <Link className="text-sm text-accent-text underline" to="/customers">
             Back to customers
           </Link>
         }

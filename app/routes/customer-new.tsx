@@ -50,7 +50,7 @@ export default function CustomerNewRoute() {
         title="New customer"
         description="Billing, licensing and terms"
         actions={
-          <Link className="text-sm text-brand-700 underline" to="/customers">
+          <Link className="text-sm text-accent-text underline" to="/customers">
             Back to customers
           </Link>
         }

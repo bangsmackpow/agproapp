@@ -170,11 +170,11 @@ export default function AuditRoute() {
           <div className="flex items-end gap-2">
             <button
               type="submit"
-              className="h-8 rounded-md bg-brand-700 px-3 text-sm font-medium text-white"
+              className="h-8 rounded-md bg-accent px-3 text-sm font-medium text-accent-fg"
             >
               Apply
             </button>
-            <Link className="text-sm text-brand-700 underline" to="/audit">
+            <Link className="text-sm text-accent-text underline" to="/audit">
               Reset
             </Link>
           </div>

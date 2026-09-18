@@ -67,7 +67,7 @@ export function ConfirmButton({
 
       {open ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4"
           role="presentation"
           onClick={(event) => {
             if (event.target === event.currentTarget) setOpen(false);
@@ -79,7 +79,7 @@ export function ConfirmButton({
             aria-labelledby="confirm-title"
             className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-lg"
           >
-            <h2 id="confirm-title" className="text-base font-semibold text-ink">
+            <h2 id="confirm-title" className="text-base font-semibold text-balance text-ink">
               {title}
             </h2>
             <div className="mt-2 text-sm text-ink-muted">{description}</div>

@@ -11,6 +11,7 @@ import {
 } from 'react-router';
 
 import './app.css';
+import { THEME_SCRIPT } from './components/theme';
 
 export const meta = () => [
   { title: 'AG Pro Solutions' },
@@ -27,10 +28,19 @@ export function Layout({ children }: { children: ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {/* Tinted browser chrome; the resolver below keeps it in step. */}
+        <meta name="theme-color" content="#ffffff" />
+        {/*
+          Resolves the stored theme before the first paint so the page never
+          flashes the wrong colours. Must run synchronously, hence inline.
+          A future CSP will need a nonce/hash for this — see components/theme.tsx.
+          It must run after the theme-color meta above so it can update it.
+        */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <Meta />
         <Links />
       </head>
-      <body className="min-h-screen">
+      <body className="min-h-dvh">
         {children}
         <ScrollRestoration />
         <Scripts />
@@ -49,13 +59,13 @@ export function ErrorBoundary() {
   if (isRouteErrorResponse(error)) {
     return (
       <main className="mx-auto max-w-2xl p-8">
-        <h1 className="text-2xl font-semibold text-ink">
+        <h1           className="text-2xl font-semibold text-balance text-ink">
           {error.status} {error.statusText}
         </h1>
         <p className="mt-2 text-ink-muted">
           {typeof error.data === 'string' ? error.data : 'That request could not be completed.'}
         </p>
-        <a className="mt-6 inline-block text-brand-700 underline" href="/">
+        <a className="mt-6 inline-block text-accent-text underline" href="/">
           Back to the dashboard
         </a>
       </main>
@@ -64,13 +74,13 @@ export function ErrorBoundary() {
 
   return (
     <main className="mx-auto max-w-2xl p-8">
-      <h1 className="text-2xl font-semibold text-ink">Something went wrong</h1>
+      <h1           className="text-2xl font-semibold text-balance text-ink">Something went wrong</h1>
       <p className="mt-2 text-ink-muted">
         {isbot(navigator?.userAgent ?? '')
           ? 'An unexpected error occurred.'
           : (error as Error)?.message ?? 'An unexpected error occurred.'}
       </p>
-      <a className="mt-6 inline-block text-brand-700 underline" href="/">
+      <a className="mt-6 inline-block text-accent-text underline" href="/">
         Back to the dashboard
       </a>
     </main>

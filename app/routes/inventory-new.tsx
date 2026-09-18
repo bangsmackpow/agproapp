@@ -59,7 +59,7 @@ export default function InventoryNewRoute() {
         title="New product"
         description="Sections appear according to the division"
         actions={
-          <Link className="text-sm text-brand-700 underline" to="/inventory">
+          <Link className="text-sm text-accent-text underline" to="/inventory">
             Back to inventory
           </Link>
         }

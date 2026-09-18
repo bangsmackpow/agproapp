@@ -180,12 +180,12 @@ export default function InvoiceDetailRoute() {
           <div className="flex items-center gap-3">
             <Status tone={statusTone(invoice.status)}>{invoice.status}</Status>
             <Link
-              className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-ink ring-1 ring-border"
+              className="rounded-md bg-control px-3 py-1.5 text-sm font-medium text-ink ring-1 ring-border hover:bg-control-hover"
               to={`/invoices/${invoice.id}/print`}
             >
               Print view
             </Link>
-            <Link className="text-sm text-brand-700 underline" to="/invoices">
+            <Link className="text-sm text-accent-text underline" to="/invoices">
               All invoices
             </Link>
           </div>

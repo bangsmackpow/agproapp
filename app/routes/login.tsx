@@ -3,6 +3,7 @@ import { Form, redirect, useActionData, useNavigation } from 'react-router';
 import type { ActionFunctionArgs, LoaderFunctionArgs } from 'react-router';
 
 import { Alert, Button, Field, Input } from '../components/ui';
+import { ThemeToggle } from '../components/theme';
 import { extractSetCookie, getEnv, getSessionUser, rawApi } from '../lib/api.server';
 
 export const meta = () => [{ title: 'Sign in · AG Pro Solutions' }];
@@ -72,7 +73,10 @@ export default function LoginRoute() {
   const [showPassword, setShowPassword] = useState(false);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-muted px-4 py-10">
+    <main className="relative flex min-h-dvh items-center justify-center bg-muted px-4 py-10">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
           <img

@@ -113,7 +113,7 @@ export default function InvoicePrintRoute() {
     <>
       <div className="no-print flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
         <div className="flex items-center gap-3">
-          <Link className="text-sm text-brand-700 underline" to={`/invoices/${invoice.id}`}>
+          <Link className="text-sm text-accent-text underline" to={`/invoices/${invoice.id}`}>
             Back to invoice
           </Link>
           <span className="text-sm text-ink-muted">
@@ -127,7 +127,7 @@ export default function InvoicePrintRoute() {
           <button
             type="button"
             onClick={() => window.print()}
-            className="h-9 rounded-md bg-brand-700 px-4 text-sm font-medium text-white"
+            className="h-9 rounded-md bg-accent px-4 text-sm font-medium text-accent-fg"
           >
             Print
           </button>

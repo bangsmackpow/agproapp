@@ -1,21 +1,35 @@
 @import 'tailwindcss';
 
 /**
- * Design tokens.
+ * Attribute-based dark mode.
  *
- * Tailwind v4 is configured in CSS. Semantic names (surface, muted, accent) are
- * declared here so components never hard-code a raw palette value, which keeps a
- * future re-theme to a single file.
+ * The theme is driven by `data-theme` on <html>, set by an inline script in
+ * root.tsx before first paint. Wiring Tailwind's `dark:` variant to the same
+ * attribute means the rare case that needs a per-mode override (rather than a
+ * token swap) stays consistent with the rest of the system.
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/**
+ * Design tokens — GitHub Primer structure, brand-owned accent removed.
+ *
+ * Tailwind v4 is configured in CSS. Utilities such as `bg-surface` compile to
+ * `var(--color-surface)`, so overriding a token under `[data-theme='dark']`
+ * re-themes every component at once. Components therefore never hard-code a
+ * raw palette value and never need a `dark:` variant.
+ *
+ * The light values are the defaults on :root, which also means a browser that
+ * never runs the resolver (JS off, crawler) still gets a readable light theme.
  */
 @theme {
   /*
-   * Brand palette, sampled from the logo (agprosolu.com): the mark is a single
-   * vivid yellow-green, #A2D90E.
+   * Brand palette, sampled from the logo (agprosolu.com): a single vivid
+   * yellow-green, #A2D90E.
    *
-   * It is far too bright to carry white text, so the scale splits its duties:
-   * 400-600 are the accent (fills, borders, active states, used with dark text)
-   * and 700 is the darkest passable green for solid buttons with white text
-   * (4.8:1 against white).
+   * This is NOT the application accent — the UI chrome is GitHub blue. These
+   * greens survive for the logo and the customer-facing documents (invoice,
+   * cheque), which are printed on white paper and should keep the brand colour
+   * no matter which screen theme is active.
    */
   --color-brand-50: #f6fce4;
   --color-brand-100: #ebf7c6;
@@ -26,29 +40,107 @@
   --color-brand-700: #5c7d08;
   --color-brand-900: #2f4204;
 
-  --color-surface: oklch(1 0 0);
-  --color-muted: oklch(0.97 0.003 250);
-  --color-border: oklch(0.9 0.004 250);
-  --color-ink: oklch(0.24 0.01 250);
-  --color-ink-muted: oklch(0.52 0.01 250);
+  /* ── Neutral surfaces (GitHub Primer light) ──────────────────────────────── */
+  --color-surface: #ffffff;
+  --color-muted: #f6f8fa;
+  --color-border: #d1d9e0;
+  --color-ink: #1f2328;
+  --color-ink-muted: #59636e;
 
-  --color-danger: oklch(0.55 0.19 27);
-  --color-success: oklch(0.55 0.14 150);
-  --color-warning: oklch(0.7 0.15 75);
+  /* Default (secondary) control fill — GitHub's #f6f8fa button. */
+  --color-control: #f6f8fa;
+  --color-control-hover: #eef2f6;
+
+  /* Modal scrim. A token so it can darken without going opaque in dark mode. */
+  --color-overlay: rgb(31 35 40 / 0.5);
+
+  /* ── Accent (GitHub blue) ────────────────────────────────────────────────── */
+  /* `accent` is the solid fill; `accent-text` is the on-canvas link/icon tone,
+     which needs a lighter value in dark mode to stay legible. */
+  --color-accent: #0969da;
+  --color-accent-hover: #0860ca;
+  --color-accent-fg: #ffffff;
+  --color-accent-text: #0969da;
+  --color-accent-muted: #ddf4ff;
+  --color-accent-border: #b6e3ff;
+
+  /* ── Status tones ────────────────────────────────────────────────────────── */
+  --color-danger: #d1242f;
+  --color-danger-fg: #ffffff;
+  /* Solid-fill red for destructive buttons. Kept apart from `danger` (the
+     signal tone) because dark mode needs a light red for text/borders but a
+     darker red behind white button text. */
+  --color-danger-emphasis: #cf222e;
+  --color-danger-emphasis-hover: #a40e26;
+  --color-danger-muted: #ffebe9;
+  --color-danger-border: #ffcecb;
+  --color-success: #1a7f37;
+  --color-success-muted: #dafbe1;
+  --color-success-border: #aceebb;
+  --color-warning: #9a6700;
+  --color-warning-muted: #fff8c5;
+  --color-warning-border: #f0d27a;
 
   /*
-   * Near-square corners, decided once here instead of by hunting `rounded-*`
-   * classes across every component. Collapsing the whole scale to a single value
-   * is deliberate: there are no steps left to drift back toward rounded, and the
-   * interface should read as dense and utilitarian rather than friendly.
-   * `rounded-full` is untouched — it is only used for status dots.
+   * GitHub's radius scale: 6px on controls and containers, 12px on overlays.
+   * Collapsing this to a single value was the previous "flat" stance; a GitHub
+   * match needs the steps back.
    */
-  --radius-sm: 2px;
-  --radius-md: 2px;
-  --radius-lg: 2px;
-  --radius-xl: 2px;
-  --radius-2xl: 2px;
-  --radius-3xl: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 6px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
+}
+
+/**
+ * Dark theme — GitHub Primer dark.
+ *
+ * Written as `:root[data-theme='dark']` (rather than `[data-theme='dark']`) so
+ * it outranks the `:root` defaults regardless of stylesheet order, and sits
+ * outside `@layer theme` so unlayered rules win over Tailwind's layered ones.
+ */
+:root[data-theme='dark'] {
+  --color-surface: #0d1117;
+  --color-muted: #151b23;
+  --color-border: #3d444d;
+  --color-ink: #f0f6fc;
+  --color-ink-muted: #9198a1;
+
+  --color-control: #212830;
+  --color-control-hover: #2a313c;
+
+  --color-overlay: rgb(1 4 9 / 0.8);
+
+  --color-accent: #1f6feb;
+  --color-accent-hover: #388bfd;
+  --color-accent-fg: #ffffff;
+  --color-accent-text: #4493f8;
+  --color-accent-muted: #388bfd26;
+  --color-accent-border: #388bfd66;
+
+  --color-danger: #f85149;
+  --color-danger-fg: #ffffff;
+  --color-danger-emphasis: #da3633;
+  --color-danger-emphasis-hover: #b62324;
+  --color-danger-muted: #f8514926;
+  --color-danger-border: #f8514966;
+  --color-success: #3fb950;
+  --color-success-muted: #3fb95026;
+  --color-success-border: #3fb95066;
+  --color-warning: #d29922;
+  --color-warning-muted: #d2992226;
+  --color-warning-border: #d2992266;
+}
+
+/* Keep native controls, scrollbars and default form widgets in sync. */
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 html,
@@ -58,20 +150,30 @@ body {
 
 body {
   /*
-   * White, not the gray canvas it used to be. Panels are separated by 1px rules
-   * rather than by floating on a tinted background, which is both denser and
-   * quieter. `muted` survives as the hover and header-band tone.
+   * GitHub's system stack. No webfont: this is an internal operations tool that
+   * should feel native and start instantly.
    */
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji';
   background-color: var(--color-surface);
   color: var(--color-ink);
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 /* Tabular figures for money and quantities, everywhere they appear. */
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Remove the 300ms double-tap-zoom delay on controls. */
+button,
+[role='button'],
+a[data-tap],
+input,
+select,
+textarea {
+  touch-action: manipulation;
 }
 
 /* Touch targets stay usable in the field on a phone. */
@@ -83,10 +185,27 @@ body {
   }
 }
 
+/*
+ * Every transition in this app is a short colour/opacity change on small UI.
+ * Honour a reduced-motion preference by making them effectively instant.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Print output
  *
- * The page margin is zero on purpose. Cheque offsets are measured from the
+ * Print is deliberately theme-independent: a cheque and an invoice are physical
+ * white documents, so they keep their own colours even when the screen is dark.
+ * The page margin is zero on purpose — cheque offsets are measured from the
  * physical edge of the sheet, so anything the browser adds would shift every
  * field. The invoice supplies its own padding instead.
  * ──────────────────────────────────────────────────────────────────────────── */

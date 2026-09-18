@@ -178,7 +178,7 @@ function OffsetField({
         type="number"
         step={step}
         defaultValue={defaultValue}
-        className="tabular h-8 w-full rounded-md border border-border bg-white px-2 text-sm"
+        className="tabular h-8 w-full rounded-md border border-border bg-surface px-2 text-sm"
       />
     </label>
   );
@@ -252,7 +252,7 @@ export default function ChecksRoute() {
                       <div className="flex flex-wrap gap-2">
                         <Link
                           to={`/checks/${check.id}/print`}
-                          className="inline-flex h-8 items-center rounded-md bg-white px-3 text-sm font-medium text-ink ring-1 ring-border"
+                          className="inline-flex h-8 items-center rounded-md bg-control px-3 text-sm font-medium text-ink ring-1 ring-border hover:bg-control-hover"
                         >
                           Open
                         </Link>

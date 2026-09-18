@@ -89,7 +89,7 @@ export default function CustomersRoute() {
           canWrite ? (
             <Link
               to="/customers/new"
-              className="inline-flex h-8 items-center rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-600"
+              className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent-hover"
             >
               New customer
             </Link>
@@ -103,7 +103,7 @@ export default function CustomersRoute() {
         {q ? (
           <p className="text-sm text-ink-muted">
             Results for “{q}”.{' '}
-            <a className="text-brand-700 underline" href="/customers">
+            <a className="text-accent-text underline" href="/customers">
               Clear
             </a>
           </p>
@@ -115,7 +115,7 @@ export default function CustomersRoute() {
             defaultValue={q}
             placeholder="Search name, account or phone"
             aria-label="Search customers"
-            className="h-7 w-56 rounded-md border border-border bg-white px-2 text-sm placeholder:text-ink-muted focus:border-brand-600 focus:outline-none"
+            className="h-7 w-56 rounded-md border border-border bg-surface px-2 text-sm placeholder:text-ink-muted focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none"
           />
           <button
             type="submit"
@@ -163,7 +163,7 @@ export default function CustomersRoute() {
                   <Td>
                     <Link
                       to={`/customers/${customer.id}`}
-                      className="font-medium text-brand-700 hover:underline"
+                      className="font-medium text-accent-text hover:underline"
                     >
                       {customer.name}
                     </Link>

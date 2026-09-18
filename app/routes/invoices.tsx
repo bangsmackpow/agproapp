@@ -88,7 +88,7 @@ export default function InvoicesRoute() {
           canWrite ? (
             <Link
               to="/invoices/new"
-              className="inline-flex h-8 items-center rounded-md bg-brand-700 px-3 text-sm font-medium text-white hover:bg-brand-600"
+              className="inline-flex h-8 items-center rounded-md bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent-hover"
             >
               New invoice
             </Link>
@@ -103,7 +103,7 @@ export default function InvoicesRoute() {
           href="/invoices"
           className={
             active === ''
-              ? 'border-b-2 border-brand-700 pb-0.5 font-medium text-ink'
+              ? 'border-b-2 border-accent pb-0.5 font-medium text-ink'
               : 'pb-0.5 text-ink-muted hover:text-ink'
           }
         >
@@ -115,7 +115,7 @@ export default function InvoicesRoute() {
             href={`/invoices?status=${status}`}
             className={
               active === status
-                ? 'border-b-2 border-brand-700 pb-0.5 font-medium capitalize text-ink'
+                ? 'border-b-2 border-accent pb-0.5 font-medium capitalize text-ink'
                 : 'pb-0.5 capitalize text-ink-muted hover:text-ink'
             }
           >
@@ -145,7 +145,7 @@ export default function InvoicesRoute() {
                   <Td>
                     <Link
                       to={`/invoices/${invoice.id}`}
-                      className="tabular font-medium text-brand-700 hover:underline"
+                      className="tabular font-medium text-accent-text hover:underline"
                     >
                       {invoice.invoiceNumber}
                     </Link>

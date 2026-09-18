@@ -17,14 +17,14 @@ import { cn } from '../lib/utils';
 /* ── Button ────────────────────────────────────────────────────────────────── */
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
-        primary: 'bg-brand-700 text-white hover:bg-brand-600',
-        secondary: 'bg-white text-ink ring-1 ring-border hover:bg-muted',
+        primary: 'bg-accent text-accent-fg hover:bg-accent-hover',
+        secondary: 'bg-control text-ink ring-1 ring-border hover:bg-control-hover',
         ghost: 'text-ink hover:bg-muted',
-        danger: 'bg-danger text-white hover:opacity-90',
+        danger: 'bg-danger-emphasis text-danger-fg hover:bg-danger-emphasis-hover',
       },
       // One step tighter all round. 32px is the default control height, which is
       // what makes a dense toolbar read as a toolbar rather than a row of buttons.
@@ -74,7 +74,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cn(
-        'h-8 w-full rounded-md border border-border bg-white px-2 text-sm text-ink placeholder:text-ink-muted focus:border-brand-600 focus:outline-none',
+        'h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-ink placeholder:text-ink-muted focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none',
         className,
       )}
       {...props}
@@ -86,7 +86,7 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-8 w-full rounded-md border border-border bg-white px-2 text-sm text-ink focus:border-brand-600 focus:outline-none',
+        'h-8 w-full rounded-md border border-border bg-surface px-2 text-sm text-ink focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none',
         className,
       )}
       {...props}
@@ -119,7 +119,7 @@ export function CardHeader({
   return (
     <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/60 px-3 py-1.5">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h2 className="text-xs font-semibold tracking-wide text-ink uppercase">{title}</h2>
+        <h2 className="text-xs font-semibold tracking-wide text-balance text-ink uppercase">{title}</h2>
         {description ? <p className="text-xs text-ink-muted">{description}</p> : null}
       </div>
       {actions ? <div className="flex items-center gap-1.5">{actions}</div> : null}
@@ -139,14 +139,14 @@ export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
  * of products does not turn into a wall of tinted pills that all look equally
  * urgent, and the one that matters stands out because it is the only one coloured.
  */
-const badgeVariants = cva('inline-flex items-center rounded-sm border px-1.5 py-0.5 text-[11px] font-medium', {
+const badgeVariants = cva('inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium', {
   variants: {
     tone: {
       neutral: 'border-border text-ink-muted',
-      info: 'border-brand-200 text-brand-900',
-      success: 'border-green-200 text-green-800',
-      warning: 'border-amber-200 text-amber-800',
-      danger: 'border-red-200 text-red-800',
+      info: 'border-accent-border text-accent-text',
+      success: 'border-success-border text-success',
+      warning: 'border-warning-border text-warning',
+      danger: 'border-danger-border text-danger',
     },
   },
   defaultVariants: { tone: 'neutral' },
@@ -163,7 +163,7 @@ export function Badge({ tone, className, children }: BadgeProps) {
 
 const statusDotTones: Record<BadgeTone, string> = {
   neutral: 'bg-ink-muted',
-  info: 'bg-brand-600',
+  info: 'bg-accent-text',
   success: 'bg-success',
   warning: 'bg-warning',
   danger: 'bg-danger',
@@ -269,13 +269,13 @@ export function Alert({
   // left border is coloured, so there is no `border-*` versus `border-l-*` colour
   // conflict to depend on stylesheet order for.
   const tones = {
-    danger: 'border-l-danger bg-red-50/70 text-red-900',
-    warning: 'border-l-warning bg-amber-50/70 text-amber-900',
-    info: 'border-l-brand-600 bg-brand-50/70 text-brand-900',
+    danger: 'border-l-danger bg-danger-muted text-danger',
+    warning: 'border-l-warning bg-warning-muted text-warning',
+    info: 'border-l-accent bg-accent-muted text-accent-text',
   } as const;
 
   return (
-    <div className={cn('rounded-sm border-l-2 py-1.5 pr-2.5 pl-2 text-sm', tones[tone])} role="alert">
+    <div className={cn('rounded-md border-l-2 py-1.5 pr-2.5 pl-2 text-sm', tones[tone])} role="alert">
       <p className="font-medium">{title}</p>
       {children ? <div className="mt-1">{children}</div> : null}
     </div>
@@ -297,7 +297,7 @@ export function PageHeader({
   return (
     <div className="mb-3 flex flex-wrap items-end justify-between gap-2 border-b border-border pb-2">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h1 className="text-lg font-semibold text-ink">{title}</h1>
+        <h1 className="text-lg font-semibold text-balance text-ink">{title}</h1>
         {description ? <p className="text-xs text-ink-muted">{description}</p> : null}
       </div>
       {actions ? <div className="flex items-center gap-1.5">{actions}</div> : null}
@@ -406,7 +406,7 @@ export function Pagination({
       <div className="flex items-center gap-1.5">
         {offset > 0 ? (
           <a
-            className="rounded-sm border border-border px-2 py-0.5 text-ink hover:bg-muted"
+            className="rounded-md border border-border px-2 py-0.5 text-ink hover:bg-muted"
             href={withParam(basePath, current, { offset: Math.max(0, offset - limit) })}
           >
             Newer
@@ -414,7 +414,7 @@ export function Pagination({
         ) : null}
         {offset + limit < total ? (
           <a
-            className="rounded-sm border border-border px-2 py-0.5 text-ink hover:bg-muted"
+            className="rounded-md border border-border px-2 py-0.5 text-ink hover:bg-muted"
             href={withParam(basePath, current, { offset: offset + limit })}
           >
             Older

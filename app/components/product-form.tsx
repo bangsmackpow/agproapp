@@ -96,7 +96,7 @@ export function ProductForm({
                 name="description"
                 rows={2}
                 defaultValue={product?.description ?? ''}
-                className="w-full rounded-md border border-border bg-white px-2 py-1.5 text-sm text-ink focus:border-brand-600 focus:outline-none"
+                className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-ink focus:border-accent focus:ring-2 focus:ring-accent/25 focus:outline-none"
               />
             </Field>
           </div>
