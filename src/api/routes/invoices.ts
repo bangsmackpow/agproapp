@@ -11,8 +11,9 @@ import {
   invoiceDeliverySchema,
   invoiceListQuerySchema,
   invoiceRecordPaymentSchema,
+  invoiceUpdateSchema,
 } from '../schemas';
-import { recordAudit } from '../../services/audit';
+import { diffFields, recordAudit } from '../../services/audit';
 import { composeInvoiceEmail } from '../../services/invoice-email';
 import { createMailer } from '../../services/mailer';
 import {
@@ -21,10 +22,30 @@ import {
   getInvoiceComplianceTokens,
   getInvoiceWithItems,
   recordInvoicePayment,
+  updateInvoice,
   updateInvoiceStatus,
 } from '../../services/invoicing';
 
 export const invoiceRoutes = new Hono<AppEnv>();
+
+/** The parts of a line worth keeping in the audit trail. */
+function compactLine(line: {
+  lineType: string;
+  description: string;
+  quantity: number;
+  unit: string | null;
+  unitPriceCents: number;
+  lineSubtotalCents: number;
+}) {
+  return {
+    lineType: line.lineType,
+    description: line.description,
+    quantity: line.quantity,
+    unit: line.unit,
+    unitPriceCents: line.unitPriceCents,
+    lineSubtotalCents: line.lineSubtotalCents,
+  };
+}
 
 invoiceRoutes.use('*', requireAuth);
 
@@ -106,6 +127,49 @@ invoiceRoutes.post('/', requirePermission('invoices:write'), async (c) => {
   });
 
   return c.json({ data: invoice }, 201);
+});
+
+/**
+ * Edits a Draft or Sent invoice: header fields, and — when `items` is supplied —
+ * the whole line set.
+ *
+ * Both gates a Sent edit needs live in the service: seed compliance is re-checked
+ * against the proposed lines before anything is written, and the stock ledger is
+ * reconciled. This route only validates the payload and records the audit.
+ */
+invoiceRoutes.patch('/:id', requirePermission('invoices:write'), async (c) => {
+  const input = await parseJson(c.req.raw, invoiceUpdateSchema);
+  const db = createDb(c.env.DB);
+  const actor = c.get('user');
+  const id = c.req.param('id');
+
+  const result = await updateInvoice(db, id, input, actor.id);
+
+  // A header diff alone would miss an edit that swaps one line for another of
+  // equal value, so the line set is snapshotted alongside it when it changed.
+  const changes = diffFields(result.before, result.invoice, { ignore: ['updatedAt'] });
+  if (Object.keys(changes).length > 0 || result.itemsReplaced) {
+    await recordAudit(db, {
+      actorUserId: actor.id,
+      action: 'invoice.updated',
+      entityType: 'invoice',
+      entityId: id,
+      metadata: {
+        changes,
+        ...(result.itemsReplaced
+          ? {
+              items: {
+                before: result.linesBefore.map(compactLine),
+                after: result.linesAfter.map(compactLine),
+              },
+            }
+          : {}),
+      },
+      ipAddress: c.req.header('cf-connecting-ip') ?? null,
+    });
+  }
+
+  return c.json({ data: result.invoice });
 });
 
 /**

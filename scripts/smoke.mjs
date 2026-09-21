@@ -405,6 +405,7 @@ async function run() {
 
         if (draft) {
           await checkPage(`/invoices/${draft.id}`, cookie, 'the invoice record page loads');
+          await checkPage(`/invoices/${draft.id}/edit`, cookie, 'the invoice edit page loads');
         }
 
         const { body: detail } = draft
@@ -416,6 +417,43 @@ async function run() {
           'the draft line is described by the product, not left blank',
           detail?.items?.[0]?.description === PRODUCT_NAME,
           `got ${JSON.stringify(detail?.items?.[0]?.description)}`,
+        );
+
+        /* ── Editing an existing invoice ─────────────────────────────────────
+         * The line set is replaced wholesale, so this asserts the round trip the
+         * edit screen depends on: a header field persists, the lines are
+         * re-priced server-side, and the misc line keeps its supplied price.
+         */
+        const edited = draft
+          ? await jsonRequest(`/api/invoices/${draft.id}`, cookie, {
+              method: 'PATCH',
+              body: JSON.stringify({
+                poNumber: 'SMOKE-PO',
+                items: [
+                  { lineType: 'product', productId, quantity: 3 },
+                  { lineType: 'misc', description: 'Smoke test fee', quantity: 1, unitPriceCents: 1234 },
+                ],
+              }),
+            })
+          : { response: null, body: null };
+
+        check(
+          'an invoice can be edited, replacing its lines',
+          edited.response?.status === 200 && edited.body?.data?.poNumber === 'SMOKE-PO',
+          `${edited.response?.status} ${JSON.stringify(edited.body)?.slice(0, 200)}`,
+        );
+
+        const afterEdit = draft
+          ? await jsonRequest(`/api/invoices/${draft.id}`, cookie)
+          : { body: null };
+
+        check(
+          'the edit persists: two lines, and the misc line keeps its price',
+          afterEdit.body?.items?.length === 2 &&
+            afterEdit.body.items.some(
+              (item) => item.description === 'Smoke test fee' && item.unitPriceCents === 1234,
+            ),
+          JSON.stringify(afterEdit.body?.items?.map((item) => item.description)),
         );
       } else {
         check('an invoice can be created from the form, the way the browser submits it', false, 'no customer created');

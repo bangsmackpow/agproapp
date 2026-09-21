@@ -26,6 +26,7 @@ export default [
     route('invoices', 'routes/invoices.tsx'),
     route('invoices/new', 'routes/invoice-new.tsx'),
     route('invoices/:id', 'routes/invoice-detail.tsx'),
+    route('invoices/:id/edit', 'routes/invoice-edit.tsx'),
     route('checks', 'routes/checks.tsx'),
     route('imports', 'routes/imports.tsx'),
     route('audit', 'routes/audit.tsx'),

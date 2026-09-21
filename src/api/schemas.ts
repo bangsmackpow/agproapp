@@ -412,9 +412,41 @@ export const invoiceCreateSchema = z.object({
   items: z.array(invoiceItemInputSchema).min(1).max(200),
 });
 
-export const invoiceUpdateSchema = invoiceCreateSchema.partial().extend({
-  status: oneOf(INVOICE_STATUSES).optional(),
+/**
+ * Editing an existing invoice.
+ *
+ * Deliberately narrower than `invoiceCreateSchema`:
+ *
+ * - **No `customerId`.** Changing the account would have to re-snapshot the
+ *   bill-to and ship-to and re-derive tax exemption, and the invoice is the
+ *   legal record of who it was sold to. Cancel and reissue instead.
+ * - **No `status`.** Lifecycle has its own endpoints, each with its own gate;
+ *   letting a PATCH move status would route around the seed-compliance check on
+ *   `draft → sent`.
+ * - **No `issueDate`.** It is the date every line resolves its price against, so
+ *   moving it would silently re-price the whole invoice.
+ *
+ * Text and optional fields are nullable so they can be *cleared*: an omitted key
+ * means "leave it alone", an explicit `null` means "empty it". (Customer records
+ * still cannot be cleared — a known gap noted in `docs/SECURITY-TODO.md`.)
+ *
+ * `items`, when present, **replaces** the whole line set; omit it for a
+ * header-only edit.
+ */
+export const invoiceUpdateSchema = z.object({
+  pricingTierKey: oneOf(PRICE_TIER_KEYS).optional(),
+  dueDate: z.coerce.date().optional(),
+  termsDays: z.number().int().min(0).max(365).optional(),
+  poNumber: z.string().trim().max(60).nullable().optional(),
+  serviceAcres: z.number().positive().nullable().optional(),
+  applicationMethod: oneOf(APPLICATION_METHODS).nullable().optional(),
+  discountCents: cents().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  internalNotes: z.string().trim().max(2000).nullable().optional(),
+  items: z.array(invoiceItemInputSchema).min(1).max(200).optional(),
 });
+
+export type InvoiceUpdateInput = z.infer<typeof invoiceUpdateSchema>;
 
 export const invoiceStatusSchema = z.object({
   status: oneOf(INVOICE_STATUSES),

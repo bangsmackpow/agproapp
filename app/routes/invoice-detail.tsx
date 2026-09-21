@@ -94,6 +94,7 @@ export async function loader({ request, context, params }: LoaderFunctionArgs) {
       send: can(user.role, 'invoices:send'),
       cancel: can(user.role, 'invoices:cancel'),
       recordPayment: can(user.role, 'invoices:write'),
+      write: can(user.role, 'invoices:write'),
     },
   };
 }
@@ -179,6 +180,14 @@ export default function InvoiceDetailRoute() {
         actions={
           <div className="flex items-center gap-3">
             <Status tone={statusTone(invoice.status)}>{invoice.status}</Status>
+            {isOpen && permissions.write ? (
+              <Link
+                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover"
+                to={`/invoices/${invoice.id}/edit`}
+              >
+                Edit invoice
+              </Link>
+            ) : null}
             <Link
               className="rounded-md bg-control px-3 py-1.5 text-sm font-medium text-ink ring-1 ring-border hover:bg-control-hover"
               to={`/invoices/${invoice.id}/print`}

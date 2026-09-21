@@ -1,7 +1,7 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
 import { conflict, notFound, unprocessable } from '../api/lib/http';
-import type { InvoiceCreateInput } from '../api/schemas';
+import type { InvoiceCreateInput, InvoiceUpdateInput } from '../api/schemas';
 import type { Database } from '../db';
 import {
   applicationPrograms,
@@ -375,6 +375,198 @@ export async function createInvoiceDraft(
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * Editing
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface InvoiceUpdateResult {
+  invoice: Invoice;
+  /** The row as it was, for the audit diff. */
+  before: Invoice;
+  linesBefore: InvoiceItem[];
+  linesAfter: InvoiceItem[];
+  /** True when `items` was supplied and the whole line set was replaced. */
+  itemsReplaced: boolean;
+  /** Movements written to the stock ledger (reversal + re-consumption). */
+  stockMovements: number;
+}
+
+/**
+ * Edits a Draft or Sent invoice.
+ *
+ * Only those two statuses are editable: `paid` is settled and `canceled` is
+ * terminal, and either would need a credit path rather than an edit.
+ *
+ * Two consequences of editing a **Sent** invoice are handled here rather than in
+ * the route, because both are business rules:
+ *
+ * 1. **Seed compliance is re-checked before anything is written.** The gate runs
+ *    on `draft → sent`, so an edit could otherwise leave a document that has
+ *    already reached a customer without the BOL/CMR and Order Number tokens it
+ *    needs. A violating edit is refused and the document is left untouched.
+ * 2. **Stock is reconciled.** Sending consumed the lines, so the new lines have
+ *    to leave the pool in the same state. The outstanding effect is reversed
+ *    first, then the final set consumed, so a failure part-way can only ever
+ *    leave stock *over*-available — never oversold.
+ *
+ * Totals always recompute; a discount-only edit is a real edit. The balance is
+ * floored at zero and the status is left alone, so an edit that drops the total
+ * below what was paid does not silently refund or re-open anything.
+ */
+export async function updateInvoice(
+  db: Database,
+  invoiceId: string,
+  input: InvoiceUpdateInput,
+  actorUserId: string,
+): Promise<InvoiceUpdateResult> {
+  const before = await db.select().from(invoices).where(eq(invoices.id, invoiceId)).get();
+  if (!before) throw notFound(`Invoice ${invoiceId} not found`);
+
+  if (before.status !== 'draft' && before.status !== 'sent') {
+    throw conflict(`A ${before.status} invoice cannot be edited`);
+  }
+
+  const itemsReplaced = input.items !== undefined;
+
+  const linesBefore = itemsReplaced
+    ? await db
+        .select()
+        .from(invoiceItems)
+        .where(eq(invoiceItems.invoiceId, invoiceId))
+        .orderBy(invoiceItems.sortOrder)
+        .all()
+    : [];
+
+  // Re-price only when the lines change. The pricing date is the invoice's own
+  // issue date, so an edit months later still resolves the price that applied.
+  let tier: PriceTier | undefined;
+  let resolved: ResolvedLine[] | undefined;
+
+  if (input.items) {
+    const tierKey = input.pricingTierKey ?? before.pricingTierKey;
+    if (!tierKey) {
+      throw unprocessable('This invoice has no pricing tier; set one before editing its lines');
+    }
+
+    const resolvedTier = await getTierByKey(db, tierKey);
+    tier = resolvedTier;
+
+    resolved = await Promise.all(
+      input.items.map((line, index) =>
+        resolveLine(db, line, { tier: resolvedTier, on: before.issueDate, sortOrder: index }),
+      ),
+    );
+  }
+
+  // A sent invoice must not be left non-compliant. Checked against the proposed
+  // lines, before the write, so a refusal leaves the document untouched.
+  if (before.status === 'sent' && resolved) {
+    const violations = await violationsForLines(
+      db,
+      resolved.map((line, index) => ({
+        invoiceItemId: `line-${index}`,
+        productId: line.values.productId,
+        complianceLogId: line.values.complianceLogId,
+        description: line.values.description,
+      })),
+    );
+
+    if (violations.length > 0) {
+      throw unprocessable(
+        'This edit would leave a sent invoice failing Iowa seed compliance: BOL/CMR Number and Order Number must be verified on every regulated seed line',
+        violations,
+      );
+    }
+  }
+
+  const effectiveDiscountCents = input.discountCents ?? before.discountCents;
+  const effectiveLines = resolved
+    ? resolved.map((line) => line.values)
+    : await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId)).all();
+
+  const totals = calculateInvoiceTotals(
+    effectiveLines.map((line) => ({
+      lineSubtotalCents: line.lineSubtotalCents,
+      discountCents: line.discountCents,
+      taxable: line.taxable,
+    })),
+    {
+      taxRate: before.taxRate,
+      discountCents: effectiveDiscountCents,
+      amountPaidCents: before.amountPaidCents,
+    },
+  );
+
+  const now = new Date();
+
+  const patch: Partial<typeof invoices.$inferInsert> = {
+    pricingTierId: tier ? tier.id : before.pricingTierId,
+    pricingTierKey: tier ? tier.key : before.pricingTierKey,
+    dueDate: input.dueDate ?? before.dueDate,
+    termsDays: input.termsDays ?? before.termsDays,
+    poNumber: input.poNumber !== undefined ? input.poNumber : before.poNumber,
+    serviceAcres: input.serviceAcres !== undefined ? input.serviceAcres : before.serviceAcres,
+    applicationMethod:
+      input.applicationMethod !== undefined ? input.applicationMethod : before.applicationMethod,
+    discountCents: effectiveDiscountCents,
+    notes: input.notes !== undefined ? input.notes : before.notes,
+    internalNotes: input.internalNotes !== undefined ? input.internalNotes : before.internalNotes,
+    subtotalCents: totals.subtotalCents,
+    taxCents: totals.taxCents,
+    totalCents: totals.totalCents,
+    balanceCents: totals.balanceCents,
+    updatedAt: now,
+  };
+
+  if (resolved) {
+    // Delete + insert in one batch. D1 has no interactive transaction, and a
+    // crash between the two would otherwise leave the invoice with no lines.
+    await db.batch([
+      db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId)),
+      db.insert(invoiceItems).values(resolved.map((line) => ({ ...line.values, invoiceId }))),
+    ]);
+  }
+
+  const [updated] = await db
+    .update(invoices)
+    .set(patch)
+    .where(eq(invoices.id, invoiceId))
+    .returning();
+
+  if (!updated) throw conflict('Failed to update invoice');
+
+  // Stock follows the document. A draft has moved nothing yet.
+  let stockMovements = 0;
+  if (before.status === 'sent' && resolved) {
+    await reverseForInvoice(db, invoiceId, actorUserId, now);
+    stockMovements = await consumeForInvoice(
+      db,
+      invoiceId,
+      resolved.map((line) => line.values),
+      actorUserId,
+      now,
+    );
+  }
+
+  const linesAfter = resolved
+    ? await db
+        .select()
+        .from(invoiceItems)
+        .where(eq(invoiceItems.invoiceId, invoiceId))
+        .orderBy(invoiceItems.sortOrder)
+        .all()
+    : [];
+
+  return {
+    invoice: updated,
+    before,
+    linesBefore,
+    linesAfter,
+    itemsReplaced,
+    stockMovements,
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Seed-compliance gate
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -384,19 +576,31 @@ export interface ComplianceViolation {
   reason: string;
 }
 
+/** A line to check, whether or not it has been written yet. */
+interface ComplianceLine {
+  /** A real item id, or a synthetic one for a line still being resolved. */
+  invoiceItemId: string;
+  productId: string | null;
+  complianceLogId: string | null;
+  description: string;
+}
+
 /**
  * Every line whose product is a regulated seed must reference a *verified*
- * compliance log carrying the BOL/CMR and Order Number tokens. Returns the
- * violations rather than throwing, so the caller can decide how to surface them.
+ * compliance log carrying the BOL/CMR and Order Number tokens.
+ *
+ * Takes lines rather than an invoice id so it can check a proposed edit **before**
+ * anything is written — a sent invoice must not be left non-compliant by an edit
+ * that then has to be undone. Returns the violations rather than throwing, so the
+ * caller decides how to surface them.
  */
-export async function findComplianceViolations(
+async function violationsForLines(
   db: Database,
-  invoiceId: string,
+  lines: readonly ComplianceLine[],
 ): Promise<ComplianceViolation[]> {
-  const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId)).all();
-  if (items.length === 0) return [];
+  if (lines.length === 0) return [];
 
-  const productIds = [...new Set(items.map((item) => item.productId).filter((id): id is string => Boolean(id)))];
+  const productIds = [...new Set(lines.map((line) => line.productId).filter((id): id is string => Boolean(id)))];
   const regulated = new Set<string>();
 
   if (productIds.length > 0) {
@@ -409,7 +613,7 @@ export async function findComplianceViolations(
     for (const row of rows) if (row.isRegulatedSeed) regulated.add(row.id);
   }
 
-  const logIds = [...new Set(items.map((item) => item.complianceLogId).filter((id): id is string => Boolean(id)))];
+  const logIds = [...new Set(lines.map((line) => line.complianceLogId).filter((id): id is string => Boolean(id)))];
   const verifiedLogs = new Set<string>();
 
   if (logIds.length > 0) {
@@ -424,29 +628,47 @@ export async function findComplianceViolations(
 
   const violations: ComplianceViolation[] = [];
 
-  for (const item of items) {
-    const isRegulated = item.productId !== null && regulated.has(item.productId);
+  for (const line of lines) {
+    const isRegulated = line.productId !== null && regulated.has(line.productId);
     if (!isRegulated) continue;
 
-    if (!item.complianceLogId) {
+    if (!line.complianceLogId) {
       violations.push({
-        invoiceItemId: item.id,
-        description: item.description,
+        invoiceItemId: line.invoiceItemId,
+        description: line.description,
         reason: 'Regulated seed line has no BOL/CMR + Order Number record attached',
       });
       continue;
     }
 
-    if (!verifiedLogs.has(item.complianceLogId)) {
+    if (!verifiedLogs.has(line.complianceLogId)) {
       violations.push({
-        invoiceItemId: item.id,
-        description: item.description,
+        invoiceItemId: line.invoiceItemId,
+        description: line.description,
         reason: 'Attached BOL/CMR + Order Number record is not verified',
       });
     }
   }
 
   return violations;
+}
+
+/** The live verdict for a stored invoice. */
+export async function findComplianceViolations(
+  db: Database,
+  invoiceId: string,
+): Promise<ComplianceViolation[]> {
+  const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId)).all();
+
+  return violationsForLines(
+    db,
+    items.map((item) => ({
+      invoiceItemId: item.id,
+      productId: item.productId,
+      complianceLogId: item.complianceLogId,
+      description: item.description,
+    })),
+  );
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

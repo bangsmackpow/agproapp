@@ -447,11 +447,20 @@ export async function consumeForInvoice(
 }
 
 /**
- * Reverses an invoice's stock effect.
+ * Reverses whatever stock effect an invoice still has outstanding.
  *
- * Idempotent: if a reversal already exists for this invoice, nothing is written.
- * Without that guard, cancelling twice — or cancelling a re-opened invoice — would
- * quietly inflate the pool.
+ * This nets to zero rather than guarding on "a reversal already exists". That
+ * guard was wrong for two reasons. A sent invoice can be **edited**, which
+ * reconciles its stock — reverse the outstanding effect, then consume the new
+ * lines — and it can be **cancelled after** being edited. A boolean "already
+ * reversed" flag let the first reconcile satisfy it, so the later cancel found
+ * the flag set and silently reversed nothing, leaving stock consumed for a
+ * cancelled document. Netting to zero is idempotent by construction: if nothing
+ * is outstanding, nothing is written.
+ *
+ * Sales are negative, reversals positive, so the sum per product and lot is what
+ * remains. Lot-level granularity is kept so a reversal returns stock to the same
+ * receipts FIFO drew from.
  */
 export async function reverseForInvoice(
   db: Database,
@@ -459,51 +468,60 @@ export async function reverseForInvoice(
   actorUserId: string | null,
   occurredAt: Date,
 ): Promise<number> {
-  const existing = await db
-    .select({ id: inventoryMovements.id })
-    .from(inventoryMovements)
-    .where(
-      and(
-        eq(inventoryMovements.referenceType, 'invoice'),
-        eq(inventoryMovements.referenceId, invoiceId),
-        eq(inventoryMovements.movementType, 'void_reversal'),
-      ),
-    )
-    .limit(1)
-    .get();
-
-  if (existing) return 0;
-
-  const sales = await db
+  const movements = await db
     .select()
     .from(inventoryMovements)
     .where(
       and(
         eq(inventoryMovements.referenceType, 'invoice'),
         eq(inventoryMovements.referenceId, invoiceId),
-        eq(inventoryMovements.movementType, 'sale'),
       ),
     )
     .all();
 
-  if (sales.length === 0) return 0;
+  if (movements.length === 0) return 0;
 
-  await recordMovements(
-    db,
-    sales.map((sale) => ({
-      productId: sale.productId,
-      lotId: sale.lotId,
-      movementType: 'void_reversal',
-      quantityDelta: -sale.quantityDelta,
-      unit: sale.unit,
-      quantityInBase: -sale.quantityInBase,
-      unitCostCents: sale.unitCostCents,
+  const outstanding = new Map<
+    string,
+    {
+      productId: string;
+      lotId: string | null;
+      unit: string | null;
+      quantityInBase: number;
+      unitCostCents: number | null;
+    }
+  >();
+
+  for (const movement of movements) {
+    // A null lot must be a distinct bucket from any real lot, so fold it to ''.
+    const key = `${movement.productId}|${movement.lotId ?? ''}`;
+    const entry = outstanding.get(key) ?? {
+      productId: movement.productId,
+      lotId: movement.lotId,
+      unit: movement.unit,
+      quantityInBase: 0,
+      unitCostCents: movement.unitCostCents,
+    };
+    entry.quantityInBase += movement.quantityInBase;
+    outstanding.set(key, entry);
+  }
+
+  const reversals = [...outstanding.values()]
+    .filter((entry) => entry.quantityInBase < 0)
+    .map((entry) => ({
+      productId: entry.productId,
+      lotId: entry.lotId,
+      movementType: 'void_reversal' as const,
+      quantityDelta: -entry.quantityInBase,
+      unit: entry.unit,
+      quantityInBase: -entry.quantityInBase,
+      unitCostCents: entry.unitCostCents,
       ...movementReference('invoice', invoiceId),
       occurredAt,
       createdByUserId: actorUserId,
-      note: `Reversal of ${sale.note ?? 'sale'}`,
-    })),
-  );
+      note: 'Reversal of invoice consumption',
+    }));
 
-  return sales.length;
+  await recordMovements(db, reversals);
+  return reversals.length;
 }
