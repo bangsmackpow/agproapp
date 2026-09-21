@@ -31,6 +31,8 @@ For `product`, `package` and `misc` lines a client-supplied `unitPriceCents` win
 
 The in-code comment calls this "an explicit override", so the *feature* is deliberate. **This is a policy gap, not a bug.**
 
+The same override is accepted when editing an existing invoice (`PATCH /api/invoices/:id`, schema `invoiceItemInputSchema`), so the gap is not confined to creation — it applies to every write path that carries a line.
+
 **Decision needed:** require a manager role (or a separate permission) to pass an override at all, **or** clamp overrides to a band around the tier price and always audit the divergence. At minimum reject `unitPriceCents <= 0` and surface negative margin at send time.
 
 ### H3. A compliance log can be attached to a line it does not belong to
@@ -119,6 +121,7 @@ So `sales` reaches the same outcome by a different verb, and `app/lib/customer-p
 - **XSS.** The only `dangerouslySetInnerHTML` is one static inline `<script>` in `app/root.tsx` that resolves the theme before paint — a module constant with no interpolation, so there is no injection surface. There is no `innerHTML`, `eval` or `document.write` anywhere. SSR and print output go through React escaping; outbound email HTML escapes every interpolated value.
 - **No email header injection.** `to` is validated as an email and passed to the provider's JSON API, not raw SMTP; subjects are built from server-side values.
 - **Seed-compliance gate is applied on both send and email delivery**; a zero-total invoice cannot be sent.
+- **Editing a sent invoice is not a bypass.** `PATCH /api/invoices/:id` re-checks the seed-compliance gate against the *proposed* lines before anything is written (a violating edit is refused and the document is left untouched), and it reconciles the stock ledger — reverse the outstanding effect, then consume the new lines. `paid` and `canceled` invoices are refused outright, and `customerId`, `status` and `issueDate` are not editable, so a PATCH cannot re-route the lifecycle or re-price by moving the date.
 - **Check numbering cannot duplicate** — atomic `UPDATE … RETURNING` plus a unique index.
 - **Audit trail is sound.** Append-only, admin-only, no write/delete endpoint; stores a before/after diff of changed fields only and redacts credential-shaped keys.
 - **Off-money status transitions** (invoice send/cancel, check print/clear/void) correctly enforce `ALLOWED_TRANSITIONS`.

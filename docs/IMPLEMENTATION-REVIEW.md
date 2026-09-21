@@ -102,7 +102,7 @@ One Worker, two responsibilities:
 
 ### Verification
 
-188 unit and integration tests, executed **inside workerd against a real D1**, not against mocks — plus a 34-check smoke run that builds the Worker, boots a preview, signs in and walks every screen.
+199 unit and integration tests, executed **inside workerd against a real D1**, not against mocks — plus a 38-check smoke run that builds the Worker, boots a preview, signs in and walks every screen.
 
 Weighted towards what loses money or breaks a law: check-number and account-number uniqueness under concurrency, the Iowa compliance gate, monetary arithmetic, RBAC lockdown, brute-force lockout, parser extraction against fixtures mirroring the real scanned documents.
 
@@ -230,3 +230,4 @@ Honest assessment, ordered by value.
 - ~~**Deployment path**~~ — CI (`pnpm deploy`) and local (`pnpm ship`) are now distinct, because the Workers Builds token has no D1 permission and cannot apply migrations.
 - ~~**Customer account numbers**~~ — now allocated from a sequence rather than typed.
 - ~~**Interface pass**~~ — browse separated from edit, status reduced to a dot and a word, then re-themed to GitHub's structure: neutral surfaces and 1px rules, 6px corners, the system font stack, and a per-browser light/dark/auto mode resolved before first paint. The brand palette now survives only on the printed documents.
+- ~~**Invoice editing**~~ — a Draft or Sent invoice can be edited from `/invoices/:id/edit`: header fields, and the whole line set. Lines are re-priced server-side; a Sent edit re-checks the seed-compliance gate against the proposed lines *before* writing and reconciles the stock ledger (reverse outstanding, then consume). `paid` and `canceled` are refused. This needed `reverseForInvoice` reworked from an "already reversed" flag to net-outstanding, so a reconcile followed by a cancel still reverses correctly.

@@ -261,6 +261,7 @@ All routes other than health require a session cookie. Permission shown is the m
 | `POST /api/inventory/lots/:id/adjust` | `inventory:write` | Relative adjustment, applied atomically |
 | `GET/POST /api/drone-units` | `inventory:read` / `inventory:write` | Serialized drone inventory |
 | `GET/POST /api/invoices`, `GET /api/invoices/:id` | `invoices:read` / `invoices:write` | Draft creation with server-resolved pricing and totals |
+| `PATCH /api/invoices/:id` | `invoices:write` | **Edits a Draft or Sent invoice** — header fields, and the whole line set when `items` is supplied. Lines are re-priced server-side; a Sent edit re-checks seed compliance and reconciles the stock ledger. `paid` and `canceled` are refused |
 | `GET /api/invoices/:id/compliance` | `invoices:read` | Live verdict on the Iowa seed gate |
 | `POST /api/invoices/:id/send` | `invoices:send` | **Draft → Sent. Fails 422 listing any unverified regulated seed line.** |
 | `POST /api/invoices/:id/cancel` | `invoices:cancel` | Sent/Draft → Canceled |
@@ -330,7 +331,7 @@ Detection is content-based, not filename-based, and a document no parser recogni
 ## Testing
 
 ```bash
-pnpm test           # vitest run — 188 tests
+pnpm test           # vitest run — 199 tests
 pnpm test:watch     # watch mode
 pnpm typecheck      # react-router typegen + tsc, app + config projects
 pnpm typegen        # regenerate .react-router/types
@@ -343,6 +344,7 @@ It covers what the unit suite structurally cannot:
 
 - **Every screen as both a document and a client-side data request.** React Router appends `.data` when navigating on the client, so a loader that derives an id from the request URL sees `<id>.data` — the document request still succeeds, and a broken record page looks fine until someone opens a record and gets an error *after* the save. Both forms are asserted for the product, customer and invoice record pages.
 - **The invoice form submitted the way a browser submits it** — urlencoded to the route action — then read back to confirm the line is described by the product rather than left blank.
+- **An existing invoice edited through the API** — the whole line set replaced, then read back to confirm a header field persists, the lines are re-priced server-side, and a misc line keeps the price it was given.
 - **Teardown is verified**: it removes the records it created and the run is repeatable.
 
 Tests run **inside workerd** via `@cloudflare/vitest-pool-workers`, so they exercise the real runtime, the real Hono app and a real per-run D1 with the migrations applied. There is no mocking layer between the tests and production behaviour.
@@ -374,7 +376,8 @@ app/                     React Router UI
 ├── root.tsx             Document shell + error boundary
 ├── routes.ts            Route table
 ├── app.css              Tailwind v4 entry: light/dark design tokens
-├── components/          ui.tsx primitives, theme toggle + resolver, forms, confirm
+├── components/          ui.tsx primitives, theme toggle + resolver, forms,
+│                        invoice-lines, confirm
 ├── lib/
 │   ├── api.server.ts    Calls the Hono app in-isolate; session and RBAC helpers
 │   ├── *-payload.server.ts  Form -> API payload parsing, shared by create and edit
@@ -382,7 +385,8 @@ app/                     React Router UI
 └── routes/              login, shell, dashboard, customers, customer-new,
                          customer-detail, inventory, inventory-new,
                          product-detail, invoices, invoice-new, invoice-detail,
-                         checks, imports, audit, invoice-print, check-print
+                         invoice-edit, checks, imports, audit, invoice-print,
+                         check-print
 src/                     API and domain layer
 ├── worker.ts            API-only entry, used by the test harness
 ├── env.ts               Bindings (generated) + Hono environment
@@ -451,7 +455,7 @@ Two things to know about configuration:
 
 The look is a working decision, not a preference: a tool opened many times a day should be quiet, dense and familiar. It follows GitHub's structure — neutral surfaces separated by 1px rules rather than floating cards, a 6px corner radius, and the system font stack, so there is no webfont to download and the app starts instantly.
 
-- **Browse screens scan; edit screens carry the detail.** A list shows the columns you read and exactly one primary action. Every optional field lives on the record's own screen, where someone has already chosen to work on that record. Creating a product, a customer and an invoice each got their own route for this reason — a full form parked beneath a list competes with the job the list is for.
+- **Browse screens scan; edit screens carry the detail.** A list shows the columns you read and exactly one primary action. Every optional field lives on the record's own screen, where someone has already chosen to work on that record. Creating or editing a product, a customer and an invoice each happen on their own route for this reason — a full form parked beneath a list competes with the job the list is for.
 - **Dense by default, and it fills the width it has.** Controls are 32px, table rows sit at their tightest comfortable height, and there are no shadows — a 1px rule does the separating. A record page splits two-thirds/one-third, with the main panel claiming two columns so a third column never sits empty beside it.
 - **A single accent, spent on meaning.** Chrome uses GitHub's blue: the one primary action per screen, links, the active nav item and focus rings. Destructive buttons use a separate, darker red *emphasis* token, kept apart from the lighter red that signals danger in text and borders — one value cannot be legible both behind white button text and as a warning on a dark canvas. Status is a coloured dot followed by the word, not a filled pill; `Badge` is for categories.
 - **Light, dark or auto, chosen by the user.** Colour is a token layer — light values in `@theme`, the same names overridden under `[data-theme='dark']` — so components carry no `dark:` variants and a re-theme stays in one file. The preference is per browser (`localStorage['agpro-theme']`) and applied by a script in the document head *before first paint*, so there is no flash of the wrong theme. `auto` follows the operating system and falls back to local time (dark from 19:00 to 06:00) only when the platform reports no preference. Light is the default when nothing is stored.
