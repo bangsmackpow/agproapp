@@ -1,103 +1,80 @@
 import type { UserRole } from './enums';
 
 /**
- * Role-Based Access Control.
+ * Access control: three roles, one capability map.
  *
- * Deny-by-default: a permission that is not explicitly granted to a role is
- * forbidden. Phase 2 middleware calls `assertCan(role, permission)`; the UI
- * (Phase 3) uses `can()` to hide affordances. Both read this single matrix so
- * they can never drift apart.
+ * The first build carried a 19-permission matrix built for a larger organization
+ * than a handful of people in one office. Three capabilities differences actually
+ * exist here, so v2 names the abilities themselves. Middleware and the UI read the
+ * same map, so a hidden button and a rejected request can never disagree.
+ *
+ * Deny-by-default: a capability not listed for a role is forbidden.
  */
-
-export const PERMISSIONS = [
-  // CRM
-  'crm:read',
-  'crm:write',
-  'crm:delete',
-
-  // Inventory
-  'inventory:read',
-  'inventory:write',
-  'inventory:import',
-
-  // Pricing engine
-  'pricing:read',
-  'pricing:write',
-  'pricing:tiers',
-
-  // Invoicing
-  'invoices:read',
-  'invoices:write',
-  'invoices:send',
-  'invoices:cancel',
-
-  // Reporting
-  'reports:read',
-
-  // Checkwriting (Admin-exclusive)
-  'checks:read',
-  'checks:write',
-  'checks:print',
-  'checks:void',
-
-  // System administration
-  'admin:users',
-  'admin:settings',
-  'admin:audit',
+export const CAPABILITIES = [
+  /** Customers: create, edit, deactivate. */
+  'manageCustomers',
+  /** Catalog: create and edit products, programs, and their costs. */
+  'manageCatalog',
+  /** Receive stock and record count adjustments. */
+  'manageStock',
+  /** Create and edit draft invoices. */
+  'manageInvoices',
+  /** Run the issue gate — a draft becomes an immutable issued invoice. */
+  'issueInvoices',
+  /** Void an issued invoice, reversing its stock. */
+  'voidInvoices',
+  /** Record payments against an issued invoice. */
+  'recordPayments',
+  /** Maintain the Iowa seed compliance records. */
+  'manageCompliance',
+  /** Read the activity log. */
+  'viewActivity',
+  /** Edit company settings: letterhead, tax rate, tiers, service rates. */
+  'manageSettings',
+  /** Create, deactivate, and reset users. */
+  'manageUsers',
 ] as const;
 
-export type Permission = (typeof PERMISSIONS)[number];
+export type Capability = (typeof CAPABILITIES)[number];
 
-const SALES_PERMISSIONS = [
-  'crm:read',
-  'crm:write',
-  'inventory:read',
-  'pricing:read',
-  'invoices:read',
-  'invoices:write',
-  'invoices:send',
-] as const satisfies readonly Permission[];
+const STAFF: readonly Capability[] = [
+  'manageCustomers',
+  'manageStock',
+  'manageInvoices',
+  'issueInvoices',
+  'recordPayments',
+];
 
-const MANAGER_PERMISSIONS = [
-  ...SALES_PERMISSIONS,
-  'crm:delete',
-  'inventory:write',
-  'inventory:import',
-  'pricing:write',
-  'invoices:cancel',
-  'reports:read',
-] as const satisfies readonly Permission[];
+/** Managers add catalog control and the ability to undo — void and audit-read. */
+const MANAGER: readonly Capability[] = [
+  ...STAFF,
+  'manageCatalog',
+  'voidInvoices',
+  'manageCompliance',
+  'viewActivity',
+];
 
-const ADMIN_PERMISSIONS = PERMISSIONS;
+const ADMIN: readonly Capability[] = [...MANAGER, 'manageSettings', 'manageUsers'];
 
-export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
-  sales: SALES_PERMISSIONS,
-  manager: MANAGER_PERMISSIONS,
-  admin: ADMIN_PERMISSIONS,
+export const ROLE_CAPABILITIES: Record<UserRole, readonly Capability[]> = {
+  staff: STAFF,
+  manager: MANAGER,
+  admin: ADMIN,
 };
 
-export function can(role: UserRole, permission: Permission): boolean {
-  return ROLE_PERMISSIONS[role].includes(permission);
+export function can(role: UserRole, capability: Capability): boolean {
+  return ROLE_CAPABILITIES[role].includes(capability);
 }
 
-/** Throws when the role lacks the permission. Used by API middleware. */
-export function assertCan(role: UserRole, permission: Permission): void {
-  if (!can(role, permission)) {
-    throw new Error(`FORBIDDEN: role "${role}" lacks permission "${permission}"`);
+/** Throws when the role lacks the capability. Used by API middleware. */
+export function assertCan(role: UserRole, capability: Capability): void {
+  if (!can(role, capability)) {
+    throw new Error(`FORBIDDEN: role "${role}" lacks capability "${capability}"`);
   }
 }
 
-/** Routes that only an Admin may reach at all (hard lockdown). */
-export const ADMIN_ONLY_ROUTE_PREFIXES = ['/checks', '/api/checks', '/api/admin'] as const;
-
-/** True when the role may see the checkwriting module. */
-export function canAccessCheckwriting(role: UserRole): boolean {
-  return can(role, 'checks:read');
-}
-
-/** Human-readable label for a role, for UI chrome. */
 export const ROLE_LABELS: Record<UserRole, string> = {
-  sales: 'Sales',
+  staff: 'Staff',
   manager: 'Manager',
   admin: 'Administrator',
 };

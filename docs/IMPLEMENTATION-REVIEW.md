@@ -1,12 +1,61 @@
 # AG Pro Solutions — Implementation Review
 
-**Date:** 16 September 2026
-**Version:** `0.1.0` · commit `main`
-**Scope:** full comparison of what was built against the original specification, with deviations justified and alternatives assessed.
+> **Two documents in one file, deliberately.** Section 0 is the v2 reset, begun 22
+> September 2026 on branch `v2`. Everything below it is the v1 review of 16
+> September, kept intact rather than rewritten — it is the evidence for why v2 is
+> shaped the way it is, and deleting it would delete the reasoning.
+
+## 0. The v2 reset (22 September 2026)
+
+The first build was sound engineering aimed at the wrong target. It reached 33
+tables, nine API route groups, and code for accounts payable, checkwriting, drone
+serialization, an OCR/parse review queue, a units registry with in-dimension
+conversion, and a stored per-season price sheet — while `program_prices` sat empty
+and **nothing could be sold**, and no code ever set `verified = true`, so no
+regulated-seed invoice could ever be issued. Breadth was bought before the spine
+worked.
+
+v2 keeps the infrastructure that was never the problem and rebuilds the domain.
+
+### Kept, unchanged
+
+D1/Workers/Hono/TypeScript/React Router/Tailwind stack, the single-Worker shape,
+Argon2id passwords with automatic rehash, hashed opaque session tokens, login rate
+limiting, deny-by-default authorization, the append-only stock ledger, integer
+cents everywhere, the diff-based activity trail, the workerd integration-test
+harness, the smoke script, and the light/dark theme system.
+
+### Replaced or removed
+
+| v1 | v2 | Why |
+|---|---|---|
+| 33 tables | 21 | Twelve belonged to modules with no UI and no user |
+| `program_prices` per tier per season | computed: cost × multiplier | The empty price table is what blocked selling. Only costs need maintaining now |
+| `units` registry + `factor_to_base` + dimension checks | one unit per product, rates entered in that unit | Deleted a whole bug class (cross-dimension refusals, silent unconverted quantities) |
+| `inventory_lots` + FIFO allocation | one pooled quantity per product | Lot/FIFO bought accuracy nobody was querying, at the cost of `convertToBase`, `receiptsWithRemaining`, and `allocateFifo` |
+| `iowa_compliance_logs.verified` + gate | the record **is** the evidence | A gate no one can pass is not a gate; regulated-seed invoices were unsendable |
+| editing a sent invoice (added in v1's last phase) | issued invoices immutable; void + reissue | The edit path needed ledger netting and a compliance re-check to stay honest. Both are gone |
+| `discountCents`, per-line `taxable` | none / one invoice-level rate | Discounts were never used; tax is one configurable default |
+| 19 permissions × 3 roles | 11 capabilities × staff/manager/admin | The matrix was built for an organization this is not |
+| hand-written `interface` per loader | Hono typed client (`hc`) | Loaders had drifted from the API they called. The routers are now chained rather than mutated, which is what makes inference possible at all |
+| `invoice_sent`/`canceled` | `issued`/`void` | Names that say what happened |
+| CI cannot apply migrations | build token gains D1 edit | "Remember to run this locally first" is a footgun, not a process |
+
+Also removed, each returnable when a user needs it: accounts payable,
+checkwriting, the parse/review import pipeline, serialized drone units,
+warehouses, and the audit-archive script. R2 stays bound; it stores uploads and
+parses nothing yet.
+
+### Status
+
+Phase 1 (foundations) is complete: schema, migration, seed, capability map, auth,
+settings, typed client, cron wiring. 37 unit tests, 23 smoke checks, clean
+typecheck and build. Phases 2–6 add catalog and reorder alerts, programs and
+pricing, invoicing, seed compliance, and user administration.
 
 ---
 
-## 1. Executive summary
+## 1. Executive summary (v1, 16 September 2026)
 
 The system is **functionally complete against the original specification, with two deliberate expansions** and **one significant gap**.
 

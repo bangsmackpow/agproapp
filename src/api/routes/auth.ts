@@ -1,9 +1,9 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 
 import { createDb } from '../../db';
-import { auditLogs, sessions, users, type User } from '../../db/schema';
+import { sessions, users, type User } from '../../db/schema';
 import type { AppEnv } from '../../env';
 import { badRequest, errorBody, parseJson, unauthorized } from '../lib/http';
 import { DUMMY_PASSWORD_HASH, hashPassword, needsRehash, verifyPassword } from '../lib/password';
@@ -24,8 +24,6 @@ import {
 } from '../../services/login-rate-limit';
 import { recordAudit } from '../../services/audit';
 
-export const authRoutes = new Hono<AppEnv>();
-
 /** Human-readable wait for a rate-limited sign-in. */
 function formatWait(seconds: number): string {
   if (seconds < 60) return 'less than a minute';
@@ -39,7 +37,7 @@ export function publicUser(user: User) {
   return safe;
 }
 
-authRoutes.post('/login', async (c) => {
+async function login(c: Context<AppEnv>) {
   const { email, password } = await parseJson(c.req.raw, loginSchema);
   const db = createDb(c.env.DB);
   const ipAddress = c.req.header('cf-connecting-ip') ?? null;
@@ -54,7 +52,6 @@ authRoutes.post('/login', async (c) => {
     await recordAudit(db, {
       action: 'auth.login_rate_limited',
       entityType: 'user',
-      entityId: null,
       metadata: {
         email,
         reason: limit.reason ?? null,
@@ -75,6 +72,8 @@ authRoutes.post('/login', async (c) => {
 
   const user = await db.select().from(users).where(eq(users.email, email)).get();
 
+  // The dummy digest makes a wrong password and an unknown account cost the same
+  // amount of work, so the response cannot be timed into an account oracle.
   const passwordMatches = await verifyPassword(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
 
   if (!user || !user.isActive || !passwordMatches) {
@@ -96,14 +95,13 @@ authRoutes.post('/login', async (c) => {
     userId: user.id,
     tokenHash,
     expiresAt: sessionExpiry(now),
-    ipAddress: c.req.header('cf-connecting-ip') ?? null,
-    userAgent: c.req.header('user-agent') ?? null,
+    ipAddress,
+    userAgent,
   });
 
   // Rehash when the stored digest predates the current algorithm or parameters.
-  // This is the whole migration: an account signed in with the old PBKDF2 format
-  // is upgraded here, using a password we have already proven correct. No reset,
-  // no downtime, no flag day — the account list converges as people sign in.
+  // This is the whole migration: an account signed in with an older digest is
+  // upgraded here, using a password already proven correct. No reset, no downtime.
   const rehashed = needsRehash(user.passwordHash) ? await hashPassword(password) : null;
 
   await db
@@ -115,21 +113,21 @@ authRoutes.post('/login', async (c) => {
     })
     .where(eq(users.id, user.id));
 
-  await db.insert(auditLogs).values({
+  await recordAudit(db, {
     actorUserId: user.id,
     action: 'auth.login',
     entityType: 'user',
     entityId: user.id,
-    ipAddress: c.req.header('cf-connecting-ip') ?? null,
+    ipAddress,
   });
 
   if (rehashed) {
-    await db.insert(auditLogs).values({
+    await recordAudit(db, {
       actorUserId: user.id,
       action: 'auth.password_rehashed',
       entityType: 'user',
       entityId: user.id,
-      ipAddress: c.req.header('cf-connecting-ip') ?? null,
+      ipAddress,
     });
   }
 
@@ -142,9 +140,9 @@ authRoutes.post('/login', async (c) => {
   });
 
   return c.json({ user: publicUser(user) });
-});
+}
 
-authRoutes.post('/logout', requireAuth, async (c) => {
+async function logout(c: Context<AppEnv>) {
   const db = createDb(c.env.DB);
   const user = c.get('user');
   const now = new Date();
@@ -154,21 +152,24 @@ authRoutes.post('/logout', requireAuth, async (c) => {
     .set({ revokedAt: now, updatedAt: now })
     .where(and(eq(sessions.id, c.get('sessionId')), isNull(sessions.revokedAt)));
 
-  await db.insert(auditLogs).values({
+  await recordAudit(db, {
     actorUserId: user.id,
     action: 'auth.logout',
     entityType: 'user',
     entityId: user.id,
+    ipAddress: c.req.header('cf-connecting-ip') ?? null,
   });
 
   deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' });
 
   return c.json({ ok: true });
-});
+}
 
-authRoutes.get('/me', requireAuth, (c) => c.json({ user: publicUser(c.get('user')) }));
+async function me(c: Context<AppEnv>) {
+  return c.json({ user: publicUser(c.get('user')) });
+}
 
-authRoutes.post('/change-password', requireAuth, async (c) => {
+async function changePassword(c: Context<AppEnv>) {
   const { currentPassword, newPassword } = await parseJson(c.req.raw, changePasswordSchema);
   const db = createDb(c.env.DB);
   const current = c.get('user');
@@ -193,14 +194,22 @@ authRoutes.post('/change-password', requireAuth, async (c) => {
     .set({ revokedAt: now, updatedAt: now })
     .where(and(eq(sessions.userId, current.id), isNull(sessions.revokedAt)));
 
-  await db.insert(auditLogs).values({
+  await recordAudit(db, {
     actorUserId: current.id,
     action: 'auth.password_changed',
     entityType: 'user',
     entityId: current.id,
+    ipAddress: c.req.header('cf-connecting-ip') ?? null,
   });
 
   deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' });
 
   return c.json({ ok: true, sessionsRevoked: true });
-});
+}
+
+/** Chained so the route schema survives in the type; see routes/health.ts. */
+export const authRoutes = new Hono<AppEnv>()
+  .post('/login', login)
+  .post('/logout', requireAuth, logout)
+  .get('/me', requireAuth, me)
+  .post('/change-password', requireAuth, changePassword);

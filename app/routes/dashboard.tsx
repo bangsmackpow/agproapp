@@ -1,136 +1,152 @@
-import { Link, useLoaderData } from 'react-router';
+import { useLoaderData } from 'react-router';
 import type { LoaderFunctionArgs } from 'react-router';
 
-import { CardHeader, EmptyRow, PageHeader, Stat, Status, Table, Td, Th, statusTone } from '../components/ui';
-import { api, getEnv, requireUser } from '../lib/api.server';
-import { canAccessCheckwriting } from '../../src/shared/rbac';
-import { formatCents, formatDate } from '../lib/utils';
+import {
+  Alert,
+  CardHeader,
+  EmptyRow,
+  PageHeader,
+  Stat,
+  Table,
+  Td,
+  Th,
+} from '../components/ui';
+import { apiClient, getEnv, requireUser } from '../lib/api.server';
+import { formatCents, formatPercent } from '../lib/utils';
 
 export const meta = () => [{ title: 'Dashboard · AG Pro Solutions' }];
 
-interface InvoiceRow {
-  id: string;
-  invoiceNumber: string;
-  customerName: string;
-  status: string;
-  issueDate: number;
-  totalCents: number;
-  balanceCents: number;
-}
-
-interface ListEnvelope<T> {
-  data: T[];
-  pagination: { total: number };
-}
-
+/**
+ * The one screen every role needs on arrival: is this business configured enough
+ * to invoice anything?
+ *
+ * The three things that gate a first invoice are a letterhead, at least one price
+ * tier, and a service rate for application and mileage. Each is read live, so an
+ * unseeded database says so plainly instead of failing later inside a form.
+ *
+ * Response shapes are inferred from the API by the typed client — there is no
+ * hand-written interface here, which is exactly what drifted in the first build.
+ */
 export async function loader({ request, context }: LoaderFunctionArgs) {
   const env = getEnv(context);
   const user = await requireUser(env, request);
+  const client = apiClient(env, request);
 
-  const [recent, customers, products, sent, drafts] = await Promise.all([
-    api<ListEnvelope<InvoiceRow>>(env, request, '/invoices?limit=6'),
-    api<ListEnvelope<unknown>>(env, request, '/customers?limit=1'),
-    api<ListEnvelope<unknown>>(env, request, '/products?limit=1'),
-    api<ListEnvelope<InvoiceRow>>(env, request, '/invoices?status=sent&limit=1'),
-    api<ListEnvelope<InvoiceRow>>(env, request, '/invoices?status=draft&limit=1'),
+  const [settingsResponse, tiersResponse, ratesResponse] = await Promise.all([
+    client.api.settings.$get(),
+    client.api.settings['price-tiers'].$get(),
+    client.api.settings['service-rates'].$get(),
   ]);
 
-  const outstanding = sent.data.reduce((total, invoice) => total + invoice.balanceCents, 0);
+  const settings = (await settingsResponse.json()).data;
+  const tiers = (await tiersResponse.json()).data;
+  const rates = (await ratesResponse.json()).data;
 
-  return {
-    user,
-    recent: recent.data,
-    totals: {
-      customers: customers.pagination.total,
-      products: products.pagination.total,
-      awaitingPayment: sent.pagination.total,
-      drafts: drafts.pagination.total,
-      outstandingCents: outstanding,
-    },
-    showChecks: canAccessCheckwriting(user.role),
-  };
+  return { user, settings, tiers, rates };
 }
 
 export default function DashboardRoute() {
-  const { user, recent, totals, showChecks } = useLoaderData<typeof loader>();
+  const { user, settings, tiers, rates } = useLoaderData<typeof loader>();
+
+  const activeTiers = tiers.filter((tier) => tier.isActive);
+  const activeRates = rates.filter((rate) => rate.isActive);
+  const blocked: string[] = [];
+  if (activeTiers.length === 0) blocked.push('no active price tier, so nothing can be priced');
+  if (activeRates.length === 0) blocked.push('no service rate, so application and mileage have nothing to bill from');
 
   return (
     <>
       <PageHeader
         title={`Good to see you, ${user.name.split(' ')[0]}`}
-        description="A snapshot of where the season stands."
+        description="Where the season stands."
       />
 
+      {blocked.length > 0 ? (
+        <div className="mb-3">
+          <Alert title="Not ready to invoice yet.">
+            <ul className="mt-1 list-disc space-y-1 pl-5">
+              {blocked.map((reason) => (
+                <li key={reason}>{reason[0]!.toUpperCase() + reason.slice(1)}.</li>
+              ))}
+            </ul>
+          </Alert>
+        </div>
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Customers" value={String(totals.customers)} />
-        <Stat label="Catalogue items" value={String(totals.products)} />
-        <Stat label="Draft invoices" value={String(totals.drafts)} hint="Not yet submitted" />
+        <Stat label="Company" value={settings.displayName} hint={settings.legalName} />
         <Stat
-          label="Awaiting payment"
-          value={String(totals.awaitingPayment)}
-          hint={formatCents(totals.outstandingCents) + ' on the most recent page'}
+          label="Tax rate"
+          value={formatPercent(settings.defaultTaxRate)}
+          hint="Applied to every new invoice"
         />
+        <Stat label="Terms" value={`${settings.defaultTermsDays} days`} hint="Default when unpaid" />
+        <Stat label="Active tiers" value={String(activeTiers.length)} hint="Margin multipliers" />
       </div>
 
-      {/* Three facts, so a strip rather than a panel. A card holding three lines
-          of text is mostly padding. */}
-      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-ink-muted">
-        <span>
-          Role <span className="font-medium text-ink capitalize">{user.role}</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          Checkwriting
-          <Status tone={showChecks ? 'success' : 'danger'}>
-            {showChecks ? 'Available' : 'Admin only'}
-          </Status>
-        </span>
-        <span className="flex items-center gap-1.5">
-          Inventory
-          <Status tone={user.role === 'sales' ? 'warning' : 'success'}>
-            {user.role === 'sales' ? 'Read-only' : 'Read and write'}
-          </Status>
-        </span>
-      </div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <div className="min-w-0 rounded-md border border-border">
+          <CardHeader
+            title="Price tiers"
+            description="Price is always cost x the selected tier's multiplier"
+          />
+          <Table>
+            <thead>
+              <tr>
+                <Th>Tier</Th>
+                <Th className="text-right">Multiplier</Th>
+                <Th>Needs license</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeTiers.length === 0 ? (
+                <EmptyRow colSpan={3} message="No tiers seeded. Run the reference seed." />
+              ) : (
+                activeTiers.map((tier) => (
+                  <tr key={tier.id}>
+                    <Td>
+                      {tier.label}
+                      <span className="ml-2 text-xs text-ink-muted">{tier.key}</span>
+                    </Td>
+                    <Td className="tabular text-right">{tier.multiplier.toFixed(2)}×</Td>
+                    <Td>{tier.requiresPesticideLicense ? 'Yes' : 'No'}</Td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </Table>
+        </div>
 
-      <div className="mt-4 rounded-md border border-border">
-        <CardHeader title="Recent invoices" description="Newest first" />
-        <Table>
-          <thead>
-            <tr>
-              <Th>Number</Th>
-              <Th>Customer</Th>
-              <Th>Issued</Th>
-              <Th className="text-right">Total</Th>
-              <Th className="text-right">Balance</Th>
-              <Th>Status</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {recent.length === 0 ? (
-              <EmptyRow colSpan={6} message="No invoices yet." />
-            ) : (
-              recent.map((invoice) => (
-                <tr key={invoice.id} className="hover:bg-muted/40">
-                  <Td>
-                    <Link
-                      to={`/invoices/${invoice.id}`}
-                      className="tabular font-medium text-accent-text hover:underline"
-                    >
-                      {invoice.invoiceNumber}
-                    </Link>
-                  </Td>
-                  <Td>{invoice.customerName}</Td>
-                  <Td className="tabular text-ink-muted">{formatDate(invoice.issueDate)}</Td>
-                  <Td className="tabular text-right">{formatCents(invoice.totalCents)}</Td>
-                  <Td className="tabular text-right">{formatCents(invoice.balanceCents)}</Td>
-                  <Td>
-                    <Status tone={statusTone(invoice.status)}>{invoice.status}</Status>
-                  </Td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </Table>
+        <div className="min-w-0 rounded-md border border-border">
+          <CardHeader
+            title="Service rates"
+            description="Application and mileage lines bill from these"
+          />
+          <Table>
+            <thead>
+              <tr>
+                <Th>Rate</Th>
+                <Th>Kind</Th>
+                <Th className="text-right">Price</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeRates.length === 0 ? (
+                <EmptyRow colSpan={3} message="No service rates yet — add them in Settings." />
+              ) : (
+                activeRates.map((rate) => (
+                  <tr key={rate.id}>
+                    <Td>{rate.label}</Td>
+                    <Td className="text-ink-muted capitalize">{rate.kind.replace('_', ' ')}</Td>
+                    <Td className="tabular text-right">
+                      {formatCents(rate.priceCents)} / {rate.unit}
+                    </Td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </Table>
+        </div>
       </div>
     </>
   );

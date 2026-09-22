@@ -5,50 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1789589146055,
-      "tag": "0000_unknown_stark_industries",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1789594481279,
-      "tag": "0001_huge_catseye",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1789599579978,
-      "tag": "0002_medical_echo",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1789604831205,
-      "tag": "0003_elite_shotgun",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1789606933050,
-      "tag": "0004_omniscient_kulan_gath",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1789658033004,
-      "tag": "0005_strange_exiles",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1789678091296,
-      "tag": "0006_burly_doomsday",
+      "when": 1790103736424,
+      "tag": "0000_aspiring_lifeguard",
       "breakpoints": true
     }
   ]

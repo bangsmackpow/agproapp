@@ -1,34 +1,74 @@
 import { env as workerEnv } from 'cloudflare:workers';
+import { hc } from 'hono/client';
 import { redirect } from 'react-router';
 
-import { createApp } from '../../src/api/app';
+import { createApp, type ApiRoutes } from '../../src/api/app';
 import type { Env } from '../../src/env';
 import type { UserRole } from '../../src/shared/enums';
-import { can, type Permission } from '../../src/shared/rbac';
+import { can, type Capability } from '../../src/shared/rbac';
 
 /**
  * Server-side bridge to the API.
  *
  * The Hono app runs in the same isolate as the SSR handler, so loaders and
- * actions call it directly rather than over HTTP. That means one implementation
- * of every business rule and no duplicated authorisation logic — the UI can only
- * do what the API already permits.
+ * actions call it directly rather than over HTTP. That means one implementation of
+ * every business rule and no duplicated authorization logic — the UI can only do
+ * what the API already permits. The API remains the authority; hiding a control is
+ * a convenience, not a control.
+ *
+ * Two entry points, deliberately:
+ *
+ *   `apiClient()` — the typed Hono client. Use this. Response shapes are inferred
+ *       from the routes, so a screen cannot drift from the API it calls. The first
+ *       build hand-declared an interface per screen and they drifted constantly.
+ *
+ *   `rawApi()` — the untyped escape hatch, kept only where the raw `Response` is
+ *       the point, i.e. reading `Set-Cookie` on login and logout.
  */
 
 const apiWorker = createApp();
 
 /** Placeholder ExecutionContext: handlers in this codebase never use waitUntil. */
-const noopContext = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
+const noopContext = {
+  waitUntil: () => {},
+  passThroughOnException: () => {},
+} as unknown as ExecutionContext;
 
 /**
  * Reads the Worker bindings.
  *
  * Bindings come from the `cloudflare:workers` module rather than being threaded
- * through React Router's request context, which keeps the RR version's context
- * API out of the application code entirely.
+ * through React Router's request context, which keeps that API out of application
+ * code entirely.
  */
 export function getEnv(_context?: unknown): Env {
   return workerEnv as Env;
+}
+
+/** A typed handle on the API that forwards the caller's session cookie. */
+export function apiClient(env: Env, request: Request) {
+  const origin = new URL(request.url).origin;
+  const cookie = request.headers.get('cookie');
+
+  // The base URL is the literal `''`, not `origin`. Hono derives the client's
+  // path shape from the *type* of that argument: pass a widened `string` and the
+  // path union collapses to `unknown`, which is exactly the silent failure this
+  // bridge exists to prevent. Relative paths are resolved against the real origin
+  // inside `fetch` instead.
+  return hc<ApiRoutes>('', {
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (cookie && !headers.has('cookie')) headers.set('cookie', cookie);
+      if (init?.body !== undefined && !headers.has('content-type')) {
+        headers.set('content-type', 'application/json');
+      }
+
+      const url =
+        typeof input === 'string' && input.startsWith('/') ? `${origin}${input}` : input;
+
+      return apiWorker.fetch(new Request(url, { ...init, headers }), env, noopContext);
+    },
+  });
 }
 
 /**
@@ -92,10 +132,8 @@ export async function rawApi(
 
 /**
  * Calls the API and unwraps the JSON envelope, throwing `ApiError` on a non-2xx
- * response.
- *
- * The full envelope is returned (`{ data, pagination }` for collections) rather
- * than just `data`, so pagination metadata is not silently discarded.
+ * response. The full envelope is returned (`{ data, pagination }` for
+ * collections) rather than just `data`, so pagination metadata is not discarded.
  */
 export async function api<T>(
   env: Env,
@@ -104,7 +142,6 @@ export async function api<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const response = await rawApi(env, request, path, init);
-
   const payload = (await response.json().catch(() => null)) as ApiErrorPayload | null;
 
   if (!response.ok) {
@@ -126,27 +163,23 @@ export interface SessionUser {
  * Maps a validation failure onto the fields that caused it.
  *
  * The API returns Zod issues as `{ path, message }`, so a bad EPA number can
- * highlight the EPA input instead of producing one generic banner. Path segments
- * are joined with dots, matching how nested form inputs are named.
+ * highlight the EPA input instead of producing one generic banner.
  */
 export function toFieldErrors(error: unknown): Record<string, string> {
   if (!(error instanceof ApiError) || !Array.isArray(error.details)) return {};
 
   const errors: Record<string, string> = {};
-
   for (const issue of error.details as unknown[]) {
     if (!issue || typeof issue !== 'object') continue;
     const { path, message } = issue as { path?: unknown; message?: unknown };
     if (typeof message !== 'string') continue;
-
-    const key = path === undefined || path === null ? '' : String(path);
-    if (key) errors[key] = message;
+    if (path === undefined || path === null) continue;
+    errors[String(path)] = message;
   }
 
   return errors;
 }
 
-/** Shape every action returns so screens can render errors uniformly. */
 export interface ActionFailure {
   error: string;
   fieldErrors?: Record<string, string>;
@@ -161,7 +194,8 @@ export function actionFailure(error: unknown, fallback: string): ActionFailure {
   };
 }
 
-/** Resolves the session, or null when nobody is signed in. */export async function getSessionUser(env: Env, request: Request): Promise<SessionUser | null> {
+/** Resolves the session, or null when nobody is signed in. */
+export async function getSessionUser(env: Env, request: Request): Promise<SessionUser | null> {
   const response = await rawApi(env, request, '/auth/me');
   if (!response.ok) return null;
 
@@ -170,10 +204,7 @@ export function actionFailure(error: unknown, fallback: string): ActionFailure {
 }
 
 /** Redirects to the login screen when there is no valid session. */
-export async function requireUser(
-  env: Env,
-  request: Request,
-): Promise<SessionUser> {
+export async function requireUser(env: Env, request: Request): Promise<SessionUser> {
   const user = await getSessionUser(env, request);
   if (!user) {
     const next = new URL(request.url).pathname;
@@ -183,13 +214,13 @@ export async function requireUser(
 }
 
 /**
- * Guards a route by permission, mirroring the API middleware.
+ * Guards a route by capability, mirroring the API middleware.
  *
- * The API is still the authority — this exists so a user never sees a screen
- * they cannot use, not to replace enforcement.
+ * The API is still the authority — this exists so a user never sees a screen they
+ * cannot use, not to replace enforcement.
  */
-export function assertPermission(user: SessionUser, permission: Permission): void {
-  if (!can(user.role, permission)) {
+export function assertCapability(user: SessionUser, capability: Capability): never | void {
+  if (!can(user.role, capability)) {
     throw new Response('You do not have access to this area.', { status: 403 });
   }
 }

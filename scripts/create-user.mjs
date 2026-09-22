@@ -27,8 +27,8 @@ import { executeSql } from './lib/d1.mjs';
 import { hashPassword, sqlText } from './lib/password.mjs';
 
 const MIN_PASSWORD_LENGTH = 12;
-const ROLES = new Set(['sales', 'manager', 'admin']);
-const DEFAULT_DATABASE = 'agpro-db';
+const ROLES = new Set(['staff', 'manager', 'admin']);
+const DEFAULT_DATABASE = 'agpro-db-v2';
 
 /* ── Argument parsing ──────────────────────────────────────────────────────── */
 
@@ -68,7 +68,7 @@ Create a user for AG Pro Solutions.
 Options:
   --email <address>    required (prompted if omitted)
   --name <full name>   required when creating (prompted if omitted)
-  --role <role>        sales | manager | admin   (default: admin)
+  --role <role>        staff | manager | admin   (default: admin)
   --password <value>   prompted and hidden if omitted
   --update             reset the password of an existing account
   --remote             target the deployed D1 instead of the local one

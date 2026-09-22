@@ -1,90 +1,68 @@
 /**
- * Canonical domain enums.
+ * Canonical domain enums — the single source of truth for Drizzle column enums,
+ * Zod validators, and UI option lists, so adding a value here propagates
+ * everywhere with type safety.
  *
- * These are the single source of truth: Drizzle column `enum` constraints, Zod
- * validators (Phase 2) and UI option lists (Phase 3) all derive from these
- * tuples, so adding a value here propagates everywhere with type safety.
+ * v2 keeps only what the business uses today. The first build grew a long tail
+ * of enums (import review states, check statuses, drone lifecycle, unit
+ * dimensions) for modules that were never reached; they return with their module.
+ *
+ * US spelling throughout: catalog, license, check.
  */
 
 /* ── Auth & access ─────────────────────────────────────────────────────────── */
 
-export const USER_ROLES = ['sales', 'manager', 'admin'] as const;
+/** Three roles for a handful of people. Deny-by-default; see rbac.ts. */
+export const USER_ROLES = ['staff', 'manager', 'admin'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
-/* ── Inventory / catalogue ─────────────────────────────────────────────────── */
+/* ── Catalog & stock ───────────────────────────────────────────────────────── */
 
-/** Inventory divisions. */
-export const PRODUCT_TYPES = ['chemical', 'seed', 'drone', 'misc'] as const;
+/** Catalog divisions. `drone` is reserved for the future sales/repair line. */
+export const PRODUCT_TYPES = ['chemical', 'seed', 'drone', 'other'] as const;
 export type ProductType = (typeof PRODUCT_TYPES)[number];
 
-/** Units of measure seen across the price sheets and vendor invoices. */
+/**
+ * The vocabulary of measure. A product is stocked and billed in exactly one of
+ * these, and a program's ingredient rate is expressed in the ingredient product's
+ * own unit — so there is no conversion table and no dimension math.
+ */
 export const UNITS = [
   'acre',
+  'mile',
+  'hour',
   'gal',
   'qt',
   'pt',
   'oz',
   'lb',
+  'ton',
   'bag',
+  'jug',
   'bottle',
   'each',
-  'package',
-  'ton',
 ] as const;
 export type Unit = (typeof UNITS)[number];
 
-/**
- * Physical quantity a unit measures.
- *
- * Conversion is only meaningful within a dimension: 128 fl oz is a gallon, but
- * ounces to pounds requires knowing what the substance is. Crossing dimensions is
- * refused rather than guessed.
- */
-export const UNIT_DIMENSIONS = ['volume', 'mass', 'count', 'area'] as const;
-export type UnitDimension = (typeof UNIT_DIMENSIONS)[number];
-
-/** Crop families used by the program/price-sheet hierarchy. */
-export const CROP_TYPES = ['corn', 'bean', 'other'] as const;
+/** Crop families a program is applied to. */
+export const CROP_TYPES = ['corn', 'soybean', 'other'] as const;
 export type CropType = (typeof CROP_TYPES)[number];
-
-/** Timing bucket within a crop cycle ("CORN (1 PASS)", "BEAN PRE", ...). */
-export const PROGRAM_STAGES = ['single', 'pre', 'post', 'fungicide', 'other'] as const;
-export type ProgramStage = (typeof PROGRAM_STAGES)[number];
-
-/** Lifecycle of a serialized drone unit. */
-export const DRONE_UNIT_STATUSES = [
-  'in_stock',
-  'sold',
-  'deployed',
-  'in_service',
-  'retired',
-] as const;
-export type DroneUnitStatus = (typeof DRONE_UNIT_STATUSES)[number];
 
 /**
  * Kinds of stock movement. The ledger is append-only, so a correction is a new
- * movement rather than an edit: `void_reversal` undoes a sale, `adjustment`
- * covers a physical count difference.
+ * movement rather than an edit: `reversal` undoes a sale, `adjustment` covers a
+ * physical count difference.
  */
-export const INVENTORY_MOVEMENT_TYPES = [
-  'receipt',
-  'sale',
-  'adjustment',
-  'return',
-  'void_reversal',
-] as const;
-export type InventoryMovementType = (typeof INVENTORY_MOVEMENT_TYPES)[number];
+export const STOCK_MOVEMENT_TYPES = ['receipt', 'sale', 'adjustment', 'reversal'] as const;
+export type StockMovementType = (typeof STOCK_MOVEMENT_TYPES)[number];
 
 /** What caused a movement, so it can be traced back to a document. */
-export const MOVEMENT_REFERENCE_TYPES = ['invoice', 'vendor_bill', 'import', 'manual'] as const;
+export const MOVEMENT_REFERENCE_TYPES = ['invoice', 'manual', 'import'] as const;
 export type MovementReferenceType = (typeof MOVEMENT_REFERENCE_TYPES)[number];
 
 /* ── Pricing engine ────────────────────────────────────────────────────────── */
 
-/**
- * The four margin tiers actually present on both worksheets.
- * The original spec named three; the source price sheets price four.
- */
+/** The four margin tiers, verified against both source price sheets. */
 export const PRICE_TIER_KEYS = [
   'financed_app',
   'cash_app',
@@ -93,103 +71,51 @@ export const PRICE_TIER_KEYS = [
 ] as const;
 export type PriceTierKey = (typeof PRICE_TIER_KEYS)[number];
 
-/** Tiers that imply the company performs the application (drone/ground). */
+/** Tiers where the company performs the application. */
 export const APPLICATION_TIER_KEYS: readonly PriceTierKey[] = ['financed_app', 'cash_app'];
 
-/** Tiers where the customer takes the product (no application service). */
+/** Tiers where the customer takes the product; these require a license on file. */
 export const CARRY_TIER_KEYS: readonly PriceTierKey[] = ['cash_carry', 'finance_carry'];
 
-/** Application service methods billed alongside product. */
-export const APPLICATION_METHODS = ['drone', 'ground', 'helicopter', 'none'] as const;
+/** How an application is delivered. */
+export const APPLICATION_METHODS = ['drone', 'ground', 'none'] as const;
 export type ApplicationMethod = (typeof APPLICATION_METHODS)[number];
+
+/** Kinds of charge that are neither a product nor a program: application, mileage. */
+export const SERVICE_RATE_KINDS = ['application', 'mileage', 'other'] as const;
+export type ServiceRateKind = (typeof SERVICE_RATE_KINDS)[number];
+
+/** Units a service rate is billed in. */
+export const SERVICE_RATE_UNITS = ['acre', 'mile', 'hour', 'each'] as const;
+export type ServiceRateUnit = (typeof SERVICE_RATE_UNITS)[number];
 
 /* ── Invoicing / AR ────────────────────────────────────────────────────────── */
 
-export const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'canceled'] as const;
+/**
+ * `issued` replaced the old `sent`, and `void` replaced `canceled`. There is no
+ * state after `issued` that permits editing lines: an issued invoice is a legal
+ * document, corrected by voiding it and issuing a new one.
+ */
+export const INVOICE_STATUSES = ['draft', 'issued', 'paid', 'void'] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
-/** How an invoice left the building. */
-export const DELIVERY_METHODS = ['email', 'print', 'download', 'sms'] as const;
-export type DeliveryMethod = (typeof DELIVERY_METHODS)[number];
-
-/** Invoice line kinds. Drives which FK/pricing path a line uses. */
-export const INVOICE_LINE_TYPES = [
-  'program',
-  'product',
-  'application_fee',
-  'package',
-  'misc',
-] as const;
+/** Invoice line kinds. Each drives one pricing path; see services/pricing.ts. */
+export const INVOICE_LINE_TYPES = ['program', 'product', 'service'] as const;
 export type InvoiceLineType = (typeof INVOICE_LINE_TYPES)[number];
 
-/* ── Accounts payable / checkwriting ───────────────────────────────────────── */
-
-export const VENDOR_BILL_STATUSES = ['open', 'partial', 'paid', 'void'] as const;
-export type VendorBillStatus = (typeof VENDOR_BILL_STATUSES)[number];
-
-export const CHECK_STATUSES = ['draft', 'printed', 'voided', 'cleared', 'reissued'] as const;
-export type CheckStatus = (typeof CHECK_STATUSES)[number];
-
-export const PAYMENT_METHODS = ['check', 'ach', 'wire', 'cash', 'card'] as const;
+export const PAYMENT_METHODS = ['check', 'cash', 'card', 'ach', 'other'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
-/* ── Documents & ingestion review queue ────────────────────────────────────── */
+/** How an invoice left the building. */
+export const DELIVERY_METHODS = ['email', 'print', 'download'] as const;
+export type DeliveryMethod = (typeof DELIVERY_METHODS)[number];
 
-export const DOCUMENT_TYPES = [
-  'bol_seed',
-  'vendor_invoice',
-  'customer_invoice',
-  'price_sheet',
-  'inventory_sheet',
-  'other',
-] as const;
-export type DocumentType = (typeof DOCUMENT_TYPES)[number];
+/** Outcomes of a delivery attempt. `skipped` means no provider is configured. */
+export const DELIVERY_STATUSES = ['sent', 'skipped', 'failed'] as const;
+export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
-export const IMPORT_BATCH_STATUSES = [
-  'draft',
-  'in_review',
-  'committed',
-  'rejected',
-] as const;
-export type ImportBatchStatus = (typeof IMPORT_BATCH_STATUSES)[number];
+/* ── Compliance & documents ────────────────────────────────────────────────── */
 
-export const IMPORT_DRAFT_STATUSES = [
-  'pending',
-  'accepted',
-  'edited',
-  'rejected',
-] as const;
-export type ImportDraftStatus = (typeof IMPORT_DRAFT_STATUSES)[number];
-
-/**
- * Which table a staged import row will be committed into. The review queue is
- * polymorphic, so the target is stored rather than modelled as N nullable FKs.
- */
-export const IMPORT_TARGETS = [
-  'product',
-  'inventory_lot',
-  'program',
-  'program_ingredient',
-  'program_price',
-  'vendor_bill',
-  'vendor_bill_item',
-  'customer',
-  'iowa_compliance_log',
-] as const;
-export type ImportTarget = (typeof IMPORT_TARGETS)[number];
-
-/** Where a compliance record's tokens came from. */
-export const COMPLIANCE_SOURCES = [
-  'manual',
-  'bol_import',
-  'vendor_invoice',
-  'customer_invoice',
-] as const;
-export type ComplianceSource = (typeof COMPLIANCE_SOURCES)[number];
-
-/* ── Known vendor slugs (drives the parser registry in Phase 2) ────────────── */
-
-export const VENDOR_CODE_PRODUCT_SUPPLY = 'product_supply_seeds';
-export const VENDOR_CODE_ATTICUS = 'atticus';
-export const VENDOR_CODE_IB_AG = 'ib_ag_supply';
-export const VENDOR_CODE_WICKMAN = 'wickman_chemical';
+/** What a stored file is, so the right filter finds it. */
+export const DOCUMENT_KINDS = ['bol', 'price_sheet', 'other'] as const;
+export type DocumentKind = (typeof DOCUMENT_KINDS)[number];

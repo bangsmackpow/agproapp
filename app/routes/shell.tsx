@@ -4,7 +4,7 @@ import type { LoaderFunctionArgs } from 'react-router';
 import { Badge, Button } from '../components/ui';
 import { ThemeToggle } from '../components/theme';
 import { getEnv, requireUser, type SessionUser } from '../lib/api.server';
-import { ROLE_LABELS, can, canAccessCheckwriting } from '../../src/shared/rbac';
+import { can, ROLE_LABELS, type Capability } from '../../src/shared/rbac';
 import { cn } from '../lib/utils';
 
 export const meta = () => [{ title: 'AG Pro Solutions' }];
@@ -19,24 +19,21 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
 interface NavItem {
   to: string;
   label: string;
-  show: boolean;
+  /** Omitted means: every signed-in role may see it. */
+  capability?: Capability;
+  /** True for the layout index, which would otherwise match every path. */
+  end?: boolean;
 }
 
-function navItems(user: SessionUser): NavItem[] {
-  return [
-    { to: '/', label: 'Dashboard', show: true },
-    { to: '/customers', label: 'Customers', show: can(user.role, 'crm:read') },
-    { to: '/inventory', label: 'Inventory', show: can(user.role, 'inventory:read') },
-    { to: '/invoices', label: 'Invoices', show: can(user.role, 'invoices:read') },
-    { to: '/imports', label: 'Imports', show: can(user.role, 'inventory:import') },
-    { to: '/checks', label: 'Checkwriting', show: canAccessCheckwriting(user.role) },
-    { to: '/audit', label: 'Audit', show: can(user.role, 'admin:audit') },
-  ];
-}
+/**
+ * The nav is driven off the same capability map the API enforces, so a link never
+ * points at a screen the user cannot use. Entries are added with their phase.
+ */
+const NAV: NavItem[] = [{ to: '/', label: 'Dashboard', end: true }];
 
 export default function ShellRoute({ loaderData }: { loaderData: { user: SessionUser } }) {
   const { user } = loaderData;
-  const items = navItems(user).filter((item) => item.show);
+  const items = NAV.filter((item) => !item.capability || can(user.role, item.capability));
 
   return (
     <div className="min-h-dvh lg:flex">
@@ -47,20 +44,19 @@ export default function ShellRoute({ loaderData }: { loaderData: { user: Session
       >
         Skip to content
       </a>
-      <aside className="border-b border-border bg-surface lg:w-60 lg:shrink-0 lg:border-r lg:border-b-0">
-        <div className="flex items-center justify-between gap-3 px-4 py-3 lg:block">
-          <div className="flex items-center gap-3 lg:block">
-            <img
-              src="/logo.jpg"
-              alt=""
-              width={40}
-              height={40}
-              className="h-10 w-10 rounded object-contain lg:mb-2"
-            />
-            <div>
-              <p className="text-sm font-semibold text-ink">AG Pro Solutions</p>
-              <p className="text-xs text-ink-muted">Creston, Iowa</p>
-            </div>
+
+      <aside className="border-b border-border bg-surface lg:w-56 lg:shrink-0 lg:border-r lg:border-b-0">
+        <div className="flex items-center gap-3 px-4 py-3 lg:block">
+          <img
+            src="/logo.jpg"
+            alt=""
+            width={40}
+            height={40}
+            className="h-10 w-10 rounded object-contain lg:mb-2"
+          />
+          <div>
+            <p className="text-sm font-semibold text-ink">AG Pro Solutions</p>
+            <p className="text-xs text-ink-muted">Creston, Iowa</p>
           </div>
         </div>
 
@@ -69,7 +65,7 @@ export default function ShellRoute({ loaderData }: { loaderData: { user: Session
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === '/'}
+              end={item.end}
               data-tap
               className={({ isActive }) =>
                 cn(

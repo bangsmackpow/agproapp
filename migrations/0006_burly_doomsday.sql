@@ -1,1 +1,0 @@
-ALTER TABLE `products` ADD `description` text;

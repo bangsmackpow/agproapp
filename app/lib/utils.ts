@@ -23,3 +23,14 @@ export function formatNumber(value: number | null | undefined, digits = 2): stri
   if (value === null || value === undefined) return '—';
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: digits }).format(value);
 }
+
+/**
+ * A decimal fraction as a percentage. Zero is "None" rather than "0%", because on
+ * a settings screen the difference between "exempt" and "measured as zero" is the
+ * whole question.
+ */
+export function formatPercent(fraction: number | null | undefined): string {
+  if (fraction === null || fraction === undefined) return '—';
+  if (fraction === 0) return 'None';
+  return `${Number((fraction * 100).toFixed(2))}%`;
+}

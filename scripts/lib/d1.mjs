@@ -37,7 +37,7 @@ function resolveWranglerBin() {
  * quoting is not a concern either way.
  */
 export function executeSql(sql, options = {}) {
-  const { database = 'agpro-db', local = true, environment, json = false, command = false } = options;
+  const { database = 'agpro-db-v2', local = true, environment, json = false, command = false } = options;
 
   const args = ['d1', 'execute', database];
   if (environment) args.push('--env', environment);
@@ -130,7 +130,7 @@ export function queryRows(sql, options = {}) {
  * Bind the target once, then use the returned client for everything.
  */
 export function createD1(options = {}) {
-  const { database = 'agpro-db', local = true, environment } = options;
+  const { database = 'agpro-db-v2', local = true, environment } = options;
   const target = { database, local, environment };
 
   return {
@@ -143,7 +143,7 @@ export function createD1(options = {}) {
 }
 
 /** Applies pending migrations to the local database. */
-export function migrateLocal(database = 'agpro-db') {
+export function migrateLocal(database = 'agpro-db-v2') {
   return execFileSync(
     process.execPath,
     [resolveWranglerBin(), 'd1', 'migrations', 'apply', database, '--local'],

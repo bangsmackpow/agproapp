@@ -1,5 +1,12 @@
 # AG Pro Solutions — Business Management Platform
 
+> **v2 rebuild in progress (this branch).** The schema has been rebuilt from 33
+> tables to 21 and the accounts-payable, checkwriting, document-parsing, drone
+> serialization, units-registry and per-tier price-sheet modules are gone — see
+> `docs/IMPLEMENTATION-REVIEW.md` for what replaced them and why. Everything below
+> still describes the v1 build and will be rewritten at cutover. `main` remains the
+> working v1 application.
+
 Edge-native, multi-user business management for **AG Pro Solutions LLC** (1200 E Howard St, Creston, IA 50801) — agricultural drone fertilization, seed sales, and drone sales.
 
 Built to serve two very different working environments from one codebase: field sales reps on phones and tablets in the field, and office managers on high-density desktop browsers.

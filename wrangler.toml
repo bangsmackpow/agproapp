@@ -1,12 +1,15 @@
 #:schema node_modules/wrangler/config-schema.json
 
 # ─────────────────────────────────────────────────────────────────────────────
-# AG Pro Solutions — edge-native business management
+# AG Pro Solutions — edge-native business management (v2)
 #
 # One Worker for everything: /api/* is served by Hono, every other path by
 # React Router SSR. There is no separate staging deployment — locally you run
 # against a local D1, and this top-level configuration is what ships to
 # Cloudflare.
+#
+# `agpro-db-v2` is the fresh schema. The original `agpro-db` is left in place,
+# untouched, as the rollback until v2 is proven.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name = "agproapp"
@@ -33,8 +36,8 @@ head_sampling_rate = 1
 # `wrangler d1 migrations apply`.
 [[d1_databases]]
 binding = "DB"
-database_name = "agpro-db"
-database_id = "fa197b3f-d0cd-4138-9065-8ecf67b6484f"
+database_name = "agpro-db-v2"
+database_id = "25a5453e-4ff6-498c-8899-ce4cbd7e8439"
 migrations_dir = "migrations"
 
 # Source documents: scanned vendor invoices, Channel BOLs, price sheets.
@@ -58,3 +61,10 @@ APP_REGION = "Creston, IA"
 #   wrangler secret put MAIL_PROVIDER_API_KEY
 MAIL_FROM = "AG Pro Solutions <invoices@example.com>"
 MAIL_REPLY_TO = ""
+
+# ── Scheduled work ───────────────────────────────────────────────────────────
+# 13:00 UTC is 7am Central year-round, which is early enough to be read before
+# the day starts and late enough not to fire in the middle of the night. Every
+# registered job runs on every trigger — see src/services/scheduler.ts.
+[triggers]
+crons = ["0 13 * * *"]

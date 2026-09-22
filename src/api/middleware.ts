@@ -5,7 +5,7 @@ import { getCookie } from 'hono/cookie';
 import { createDb } from '../db';
 import { sessions, users, type User } from '../db/schema';
 import type { AppEnv } from '../env';
-import { can, type Permission } from '../shared/rbac';
+import { can, type Capability } from '../shared/rbac';
 import { forbidden, unauthorized } from './lib/http';
 import { SESSION_COOKIE_NAME, hashSessionToken } from './lib/session';
 
@@ -75,18 +75,18 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
 });
 
 /**
- * Route guard for a single permission. Must be mounted after `requireAuth`.
+ * Route guard for a single capability. Must be mounted after `requireAuth`.
  *
- * This is the middleware-side half of the RBAC matrix; the UI reads the same
- * matrix, so a hidden button and a rejected request can never disagree.
+ * This is the middleware-side half of the capability map; the UI reads the same
+ * map, so a hidden button and a rejected request can never disagree.
  */
-export const requirePermission = (permission: Permission) =>
+export const requireCapability = (capability: Capability) =>
   createMiddleware<AppEnv>(async (c, next) => {
     const user = c.get('user');
     if (!user) throw unauthorized();
 
-    if (!can(user.role, permission)) {
-      throw forbidden(`Role "${user.role}" may not perform "${permission}"`);
+    if (!can(user.role, capability)) {
+      throw forbidden(`Role "${user.role}" may not perform "${capability}"`);
     }
 
     await next();

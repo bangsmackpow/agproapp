@@ -1,1 +1,0 @@
-ALTER TABLE `bank_accounts` ADD `account_number` text;

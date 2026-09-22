@@ -1,13 +1,16 @@
 import type { Database } from '../db';
-import { auditLogs } from '../db/schema';
+import { activityLog } from '../db/schema';
 
 /**
- * Administrative audit trail.
+ * The activity trail.
  *
- * Entries record *what changed*, not merely that something did: storing a diff of
- * the changed fields is what makes a question like "who switched this product
- * from gallons to ounces, and when" answerable. Only changed fields are stored,
- * so an audit row stays small even when a form submits twenty fields.
+ * Entries record *what changed*, not merely that something did: `changes` holds a
+ * before/after diff of only the fields that differ, which is what makes "who
+ * switched this product's cost, and what was it before" answerable. Only changed
+ * fields are stored, so a row stays small even when a form submits twenty fields.
+ *
+ * Append-only. There is no update or delete path here, in the schema, or in the
+ * API — a trail that can be edited is not a trail.
  */
 
 export interface FieldChange {
@@ -16,15 +19,15 @@ export interface FieldChange {
 }
 
 /**
- * Fields never worth recording, because they change on every write.
- * `updatedAt` differing on every update would make every row look interesting.
+ * Fields never worth recording, because they change on every write. An
+ * `updatedAt` that differs on every update would make every row look interesting.
  */
 const IGNORED_FIELDS = new Set(['updatedAt', 'updated_at', 'createdAt', 'created_at']);
 
 /**
- * Keys whose values must never reach the audit log. A diff of a user record
- * would otherwise write password hashes into a table that is read by the audit
- * viewer — an excellent way to leak the whole credential store.
+ * Keys whose values must never reach the trail. A diff of a user record would
+ * otherwise write a password hash into a table the activity viewer reads — an
+ * excellent way to leak the whole credential store.
  */
 const REDACTED_KEY = /password|secret|token|hash|api_?key/i;
 
@@ -78,7 +81,7 @@ export function diffFields(
 }
 
 /**
- * Appends to the administrative audit trail.
+ * Appends to the activity trail.
  *
  * Never throws: an audit write must not be able to fail the business operation it
  * is describing. Failures are logged and swallowed instead.
@@ -90,16 +93,18 @@ export async function recordAudit(
     action: string;
     entityType: string;
     entityId?: string | null;
+    changes?: FieldDiff;
     metadata?: Record<string, unknown>;
     ipAddress?: string | null;
   },
 ): Promise<void> {
   try {
-    await db.insert(auditLogs).values({
+    await db.insert(activityLog).values({
       actorUserId: entry.actorUserId ?? null,
       action: entry.action,
       entityType: entry.entityType,
       entityId: entry.entityId ?? null,
+      changes: entry.changes ?? null,
       metadata: entry.metadata ?? null,
       ipAddress: entry.ipAddress ?? null,
     });
@@ -107,7 +112,7 @@ export async function recordAudit(
     console.error(
       JSON.stringify({
         level: 'warn',
-        message: 'audit write failed',
+        message: 'activity write failed',
         action: entry.action,
         entityType: entry.entityType,
         entityId: entry.entityId ?? null,
@@ -118,7 +123,7 @@ export async function recordAudit(
 }
 
 /**
- * Records an update, with a diff instead of a bare field list.
+ * Records an update with a diff instead of a bare field list.
  *
  * Returns the diff so a caller can report it. Writes nothing when no field
  * actually changed — a save that changes nothing is not an event.
@@ -145,7 +150,8 @@ export async function recordChange(
     action: entry.action,
     entityType: entry.entityType,
     entityId: entry.entityId,
-    metadata: { changes, ...entry.metadata },
+    changes,
+    metadata: entry.metadata,
     ipAddress: entry.ipAddress,
   });
 
