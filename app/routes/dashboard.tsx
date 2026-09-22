@@ -1,4 +1,4 @@
-import { useLoaderData } from 'react-router';
+import { Link, useLoaderData } from 'react-router';
 import type { LoaderFunctionArgs } from 'react-router';
 
 import {
@@ -7,6 +7,7 @@ import {
   EmptyRow,
   PageHeader,
   Stat,
+  Status,
   Table,
   Td,
   Th,
@@ -32,21 +33,23 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   const user = await requireUser(env, request);
   const client = apiClient(env, request);
 
-  const [settingsResponse, tiersResponse, ratesResponse] = await Promise.all([
+  const [settingsResponse, tiersResponse, ratesResponse, lowResponse] = await Promise.all([
     client.api.settings.$get(),
     client.api.settings['price-tiers'].$get(),
     client.api.settings['service-rates'].$get(),
+    client.api.inventory.low.$get(),
   ]);
 
   const settings = (await settingsResponse.json()).data;
   const tiers = (await tiersResponse.json()).data;
   const rates = (await ratesResponse.json()).data;
+  const low = (await lowResponse.json()).data ?? [];
 
-  return { user, settings, tiers, rates };
+  return { user, settings, tiers, rates, low };
 }
 
 export default function DashboardRoute() {
-  const { user, settings, tiers, rates } = useLoaderData<typeof loader>();
+  const { user, settings, tiers, rates, low } = useLoaderData<typeof loader>();
 
   const activeTiers = tiers.filter((tier) => tier.isActive);
   const activeRates = rates.filter((rate) => rate.isActive);
@@ -74,14 +77,69 @@ export default function DashboardRoute() {
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Company" value={settings.displayName} hint={settings.legalName} />
+        <Stat
+          label="Needs ordering"
+          value={String(low.length)}
+          hint={low.length > 0 ? 'At or below the reorder point' : 'Nothing flagged'}
+        />
+        <Stat label="Catalogued" value={String(tiers.length ? activeTiers.length : 0)} hint="Active margin tiers" />
         <Stat
           label="Tax rate"
           value={formatPercent(settings.defaultTaxRate)}
           hint="Applied to every new invoice"
         />
         <Stat label="Terms" value={`${settings.defaultTermsDays} days`} hint="Default when unpaid" />
-        <Stat label="Active tiers" value={String(activeTiers.length)} hint="Margin multipliers" />
+      </div>
+
+      {/* The question this screen exists to answer without a click. */}
+      <div className="mt-4 rounded-md border border-border">
+        <CardHeader
+          title="Needs ordering"
+          description="On hand is summed from the stock ledger, not stored"
+          actions={
+            low.length > 0 ? (
+              <Link className="text-sm text-accent-text underline" to="/inventory?stock=low">
+                Open the list
+              </Link>
+            ) : null
+          }
+        />
+        <Table>
+          <thead>
+            <tr>
+              <Th>Item</Th>
+              <Th className="text-right">On hand</Th>
+              <Th className="text-right">Reorder point</Th>
+              <Th className="text-right">Suggested</Th>
+              <Th>Order from</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {low.length === 0 ? (
+              <EmptyRow colSpan={5} message="Nothing is at or below its reorder point." />
+            ) : (
+              low.map((item) => (
+                <tr key={item.id} className="hover:bg-muted/40">
+                  <Td>
+                    <Link
+                      to={`/inventory/${item.id}`}
+                      className="font-medium text-accent-text hover:underline"
+                    >
+                      {item.name}
+                    </Link>
+                    <span className="ml-2 text-xs text-ink-muted">{item.sku}</span>
+                  </Td>
+                  <Td className="tabular text-right">
+                    <Status tone="danger">{`${item.quantityOnHand} ${item.unit}`}</Status>
+                  </Td>
+                  <Td className="tabular text-right">{item.reorderPoint ?? '—'}</Td>
+                  <Td className="tabular text-right">{item.reorderQuantity ?? '—'}</Td>
+                  <Td className="text-ink-muted">{item.vendorName ?? 'No vendor on file'}</Td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </Table>
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">

@@ -1,9 +1,9 @@
-import { Hono, type Context } from 'hono';
+import { Hono } from 'hono';
 
 import { createDb } from '../../db';
 import type { AppEnv } from '../../env';
-import { requireAuth, requireCapability } from '../middleware';
-import { parseJson, unauthorized } from '../lib/http';
+import { actorOf, requireAuth, requireCapability } from '../middleware';
+import { parseJson } from '../lib/http';
 import {
   priceTierUpdateSchema,
   serviceRateCreateSchema,
@@ -40,7 +40,7 @@ export const settingsRoutes = new Hono<AppEnv>()
   .patch('/', requireCapability('manageSettings'), async (c) => {
     const input = await parseJson(c.req.raw, settingsUpdateSchema);
     const db = createDb(c.env.DB);
-    return c.json({ data: await updateSettings(db, input, actor(c)) });
+    return c.json({ data: await updateSettings(db, input, actorOf(c)) });
   })
   .get('/price-tiers', async (c) => {
     const db = createDb(c.env.DB);
@@ -49,7 +49,7 @@ export const settingsRoutes = new Hono<AppEnv>()
   .patch('/price-tiers/:id', requireCapability('manageSettings'), async (c) => {
     const input = await parseJson(c.req.raw, priceTierUpdateSchema);
     const db = createDb(c.env.DB);
-    return c.json({ data: await updatePriceTier(db, c.req.param('id'), input, actor(c)) });
+    return c.json({ data: await updatePriceTier(db, c.req.param('id'), input, actorOf(c)) });
   })
   .get('/service-rates', async (c) => {
     const db = createDb(c.env.DB);
@@ -63,15 +63,6 @@ export const settingsRoutes = new Hono<AppEnv>()
   .patch('/service-rates/:id', requireCapability('manageSettings'), async (c) => {
     const input = await parseJson(c.req.raw, serviceRateUpdateSchema);
     const db = createDb(c.env.DB);
-    return c.json({ data: await updateServiceRate(db, c.req.param('id'), input, actor(c)) });
+    return c.json({ data: await updateServiceRate(db, c.req.param('id'), input, actorOf(c)) });
   });
 
-/**
- * `requireAuth` has already run, so a missing user is a bug rather than a 401 —
- * but failing loudly here beats writing an activity row attributed to nobody.
- */
-function actor(c: Context<AppEnv>): { userId: string; ipAddress: string | null } {
-  const user = c.get('user');
-  if (!user) throw unauthorized();
-  return { userId: user.id, ipAddress: c.req.header('cf-connecting-ip') ?? null };
-}

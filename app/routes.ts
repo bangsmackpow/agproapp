@@ -15,7 +15,13 @@ export default [
   route('logout', 'routes/logout.tsx'),
   layout('routes/shell.tsx', [
     index('routes/dashboard.tsx'),
-    // Catalog, customers, programs, invoices, seed records, vendors, settings,
-    // users, and activity join in their own phases.
+    route('inventory', 'routes/inventory.tsx'),
+    // Declared before `inventory/:id`, or the literal path is read as a record id
+    // and never reaches the create screen.
+    route('inventory/new', 'routes/inventory-new.tsx'),
+    route('inventory/:id', 'routes/product-detail.tsx'),
+    route('vendors', 'routes/vendors.tsx'),
+    // Programs, customers, invoices, seed records, settings, users, and activity
+    // join in their own phases.
   ]),
 ] satisfies RouteConfig;

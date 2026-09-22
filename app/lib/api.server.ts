@@ -45,16 +45,30 @@ export function getEnv(_context?: unknown): Env {
   return workerEnv as Env;
 }
 
-/** A typed handle on the API that forwards the caller's session cookie. */
+/**
+ * A typed handle on the API. Use it for **reads**.
+ *
+ * Hono derives the client's types from what a route declares, so
+ * `client.api.products.$get()` knows the shape of its own response — which is the
+ * drift that mattered, because every loader used to re-declare an interface for a
+ * payload the API had already described.
+ *
+ * For **writes**, use `api()` below instead. A body parsed with `parseJson()` is
+ * invisible to Hono's type inference (only `validator()` publishes it), so the
+ * client will not accept a `json` argument. Adding `@hono/zod-validator` would fix
+ * that and reshape every error body for it; a write here redirects on success and
+ * its response is discarded, so the untyped body is the cheaper side of the
+ * trade. If a write's response ever matters, switch that route to `validator()`.
+ *
+ * The base URL is the literal `''`, not the real origin: Hono infers the path
+ * shape from the *type* of that argument, and a widened `string` collapses the
+ * client to `unknown` — the silent failure this whole bridge exists to prevent.
+ * Relative paths are resolved against the real origin inside `fetch`.
+ */
 export function apiClient(env: Env, request: Request) {
   const origin = new URL(request.url).origin;
   const cookie = request.headers.get('cookie');
 
-  // The base URL is the literal `''`, not `origin`. Hono derives the client's
-  // path shape from the *type* of that argument: pass a widened `string` and the
-  // path union collapses to `unknown`, which is exactly the silent failure this
-  // bridge exists to prevent. Relative paths are resolved against the real origin
-  // inside `fetch` instead.
   return hc<ApiRoutes>('', {
     fetch: (input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);

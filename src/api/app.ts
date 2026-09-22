@@ -5,6 +5,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AppEnv } from '../env';
 import { errorBody, HttpError } from './lib/http';
 import { requestContext } from './middleware';
+import { catalogRoutes } from './routes/catalog';
 import { authRoutes } from './routes/auth';
 import { healthRoutes } from './routes/health';
 import { settingsRoutes } from './routes/settings';
@@ -67,6 +68,8 @@ export function createApp() {
       // Mounted at /api/settings: also serves /api/settings/price-tiers and
       // /api/settings/service-rates, which the invoice composer reads.
       .route('/api/settings', settingsRoutes)
+      // Mounted at /api: /api/products, /api/inventory/low, /api/vendors.
+      .route('/api', catalogRoutes)
   );
 }
 

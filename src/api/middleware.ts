@@ -1,4 +1,5 @@
 import { and, eq, gt, isNull } from 'drizzle-orm';
+import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import { getCookie } from 'hono/cookie';
 
@@ -99,3 +100,17 @@ export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
   if (user.role !== 'admin') throw forbidden('Administrator access required');
   await next();
 });
+
+/**
+ * The actor for an audit write.
+ *
+ * `requireAuth` has already run on every route that calls this, so a missing user
+ * is a programming error rather than a 401 — and failing here beats silently
+ * writing an activity row attributed to nobody, which is the row you cannot
+ * interpret when the trail matters.
+ */
+export function actorOf(c: Context<AppEnv>): { userId: string; ipAddress: string | null } {
+  const user = c.get('user');
+  if (!user) throw unauthorized();
+  return { userId: user.id, ipAddress: c.req.header('cf-connecting-ip') ?? null };
+}

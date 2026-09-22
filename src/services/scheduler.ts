@@ -1,18 +1,18 @@
 import { createDb } from '../db';
 import type { Env } from '../env';
 import { pruneLoginAttempts } from './login-rate-limit';
+import { runReorderDigest } from './reorder-digest';
 
 /**
  * Periodic work, run from the Worker's `scheduled` trigger.
  *
  * Each task is independent and each is caught: one failing job must not stop the
- * others, and a throw here would show up as a red herring in the cron metrics
- * rather than a diagnosable error.
+ * others, and a throw here surfaces as a red herring in the cron metrics rather
+ * than a diagnosable error.
  *
- * Phase 1 wires the trigger and carries the one job that exists today (pruning
- * login attempts, which the sign-in path also does opportunistically). The
- * low-stock digest joins here in the catalog phase, when there are products with
- * reorder points to check.
+ * Jobs run on every trigger and are responsible for their own idempotency — the
+ * digest claims a day in `settings.lastDigestAt` precisely so a cron retry cannot
+ * mail the same list twice.
  */
 export async function runScheduledTasks(
   env: Env,
@@ -22,6 +22,9 @@ export async function runScheduledTasks(
   const db = createDb(env.DB);
 
   const jobs: Record<string, () => Promise<void>> = {
+    digest: async () => {
+      await runReorderDigest(env);
+    },
     prune: async () => {
       await pruneLoginAttempts(db);
     },

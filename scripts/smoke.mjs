@@ -32,7 +32,10 @@ const STAFF_EMAIL = `smoke-staff-${STAMP}@agpro.local`;
 const PASSWORD = generatePassword();
 
 /** Screens that exist in the current phase. Add to this as phases land. */
-const SCREENS = ['/'];
+const SCREENS = ['/', '/inventory', '/inventory/new', '/vendors'];
+
+/** Filled in as the catalog checks run, so teardown can remove exactly these. */
+const created = { productId: null, noCostId: null, vendorId: null };
 
 const d1 = createD1({ local: true });
 const results = [];
@@ -84,8 +87,19 @@ function insertUser(email, name, role) {
 
 function teardown(emails) {
   const list = emails.map(sqlText).join(', ');
+  const productIds = [created.productId, created.noCostId].filter(Boolean).map(sqlText).join(', ');
+  const productsClause = productIds ? `(${productIds})` : "(NULL)";
+
   d1.execute(
     [
+      // stock_movements references products with ON DELETE restrict, so the ledger
+      // goes before the rows it describes — the same constraint that stops the app
+      // deleting a product that has ever moved.
+      `DELETE FROM stock_movements WHERE product_id IN ${productsClause};`,
+      `DELETE FROM activity_log WHERE entity_type = 'product' AND entity_id IN ${productsClause};`,
+      `DELETE FROM products WHERE id IN ${productsClause};`,
+      `DELETE FROM activity_log WHERE entity_type = 'vendor' AND entity_id = ${sqlText(created.vendorId ?? '')};`,
+      `DELETE FROM vendors WHERE id = ${sqlText(created.vendorId ?? '')};`,
       `DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE email IN (${list}));`,
       `DELETE FROM activity_log WHERE actor_user_id IN (SELECT id FROM users WHERE email IN (${list}));`,
       `DELETE FROM login_attempts WHERE email IN (${list});`,
@@ -200,6 +214,102 @@ async function run() {
     const settingsBody = await (await fetch(`${BASE}/api/settings`, { headers: { cookie } })).json();
     check('settings carry the Creston letterhead', settingsBody?.data?.city === 'Creston' && settingsBody?.data?.state === 'IA');
 
+    /* ── Catalog and the stock ledger ────────────────────────────────────────
+     * The spine of the business: a product has a cost, stock arrives, and the
+     * on-hand number is *derived* from those movements rather than stored. Each
+     * check below is a claim the inventory screen makes to a person deciding what
+     * to buy, so a wrong answer here is a wrong order.
+     */
+    const vendor = await fetch(`${BASE}/api/vendors`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ name: `Smoke Supplier ${STAMP}`, phone: '(641) 555-0100' }),
+    });
+    const vendorBody = await vendor.json().catch(() => null);
+    created.vendorId = vendorBody?.data?.id ?? null;
+    check('a vendor can be added', vendor.status === 201 && created.vendorId !== null, `${vendor.status}`);
+
+    const product = await fetch(`${BASE}/api/products`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sku: `SMOKE-${STAMP}`,
+        name: 'Smoke Glypho',
+        type: 'chemical',
+        unit: 'gal',
+        costCents: 4200,
+        reorderPoint: 50,
+        reorderQuantity: 55,
+        vendorId: created.vendorId,
+      }),
+    });
+    const productBody = await product.json().catch(() => null);
+    created.productId = productBody?.data?.id ?? null;
+    check('a product can be catalogued with a cost', product.status === 201 && created.productId !== null, `${product.status} ${JSON.stringify(productBody)?.slice(0, 160)}`);
+
+    const empty = await (await fetch(`${BASE}/api/products/${created.productId}`, { headers: { cookie } })).json();
+    check('a new product starts at zero on hand', empty?.product?.quantityOnHand === 0, JSON.stringify(empty?.product?.quantityOnHand));
+    check('zero against a reorder point of 50 is flagged as needing ordering', empty?.product?.needsReorder === true);
+    check('a product with a cost is invoiceable', empty?.product?.isInvoiceable === true);
+
+    const low = await (await fetch(`${BASE}/api/inventory/low`, { headers: { cookie } })).json();
+    check('the needs-ordering list includes it', (low?.data ?? []).some((row) => row.id === created.productId));
+
+    const receipt = await fetch(`${BASE}/api/products/${created.productId}/receipts`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ quantity: 100, unitCostCents: 4300, reference: 'SMOKE-INV-1' }),
+    });
+    const receiptBody = await receipt.json().catch(() => null);
+    check('receiving stock raises the pool', receipt.status === 201 && receiptBody?.data?.quantityOnHand === 100, `${receipt.status} ${JSON.stringify(receiptBody)?.slice(0, 160)}`);
+
+    const adjustment = await fetch(`${BASE}/api/products/${created.productId}/adjustments`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ delta: -70, reason: 'Applied 70 acres on the Smith field' }),
+    });
+    const adjustmentBody = await adjustment.json().catch(() => null);
+    check('a signed adjustment moves the pool', adjustment.status === 201 && adjustmentBody?.data?.quantityOnHand === 30, `${adjustment.status} ${JSON.stringify(adjustmentBody)?.slice(0, 160)}`);
+    check('the adjustment keeps its reason', (adjustmentBody?.data?.movement?.note ?? '').includes('Smith field'));
+
+    const overspill = await fetch(`${BASE}/api/products/${created.productId}/adjustments`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ delta: -1000, reason: 'Trying to go negative' }),
+    });
+    const overspillBody = await overspill.text();
+    check(
+      'a shrinkage larger than the stock on hand is refused',
+      overspill.status === 422 && /negative|ledger/i.test(overspillBody),
+      `${overspill.status} ${overspillBody.slice(0, 140)}`,
+    );
+
+    const detail = await fetch(`${BASE}/api/products/${created.productId}`, { headers: { cookie } });
+    const detailBody = await detail.json().catch(() => null);
+    check('the ledger tells the whole story of the number', (detailBody?.ledger ?? []).length === 2, `got ${(detailBody?.ledger ?? []).length}`);
+    check('sold quantity is reported from the ledger', detailBody?.usedOnAcres === 0);
+
+    const productPage = await fetch(`${BASE}/inventory/${created.productId}`, { headers: { cookie }, redirect: 'manual' });
+    check(`the product screen loads`, productPage.status === 200, `got ${productPage.status}`);
+
+    const priced = await fetch(`${BASE}/api/products?q=SMOKE-${STAMP}`, { headers: { cookie } });
+    const pricedBody = await priced.json().catch(() => null);
+    check('search finds the product by SKU', (pricedBody?.data ?? []).some((row) => row.id === created.productId));
+
+    const unpriceable = await fetch(`${BASE}/api/products`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ sku: `SMOKE-NOCOST-${STAMP}`, name: 'No Cost Yet', type: 'other', unit: 'each' }),
+    });
+    const unpriceableBody = await unpriceable.json().catch(() => null);
+    if (unpriceableBody?.data?.id) created.noCostId = unpriceableBody.data.id;
+    check('a product may be saved without a cost', unpriceable.status === 201, `${unpriceable.status}`);
+    check(
+      'but it is reported as not invoiceable rather than priced at zero',
+      unpriceableBody?.data?.costCents === null,
+      JSON.stringify(unpriceableBody?.data?.costCents),
+    );
+
     /* ── Capabilities are enforced by the API, not just the UI ─────────────── */
     const unauth = await fetch(`${BASE}/api/settings/service-rates`);
     check('unauthenticated API request is 401 JSON', unauth.status === 401 && (unauth.headers.get('content-type') ?? '').includes('json'), `${unauth.status}`);
@@ -233,6 +343,32 @@ async function run() {
 
     const staffRead = await fetch(`${BASE}/api/settings/price-tiers`, { headers: { cookie: staffSession.cookie } });
     check('staff can still read what the invoice composer needs', staffRead.status === 200, `${staffRead.status}`);
+
+    // The split that matters in the field: someone at the barn can say what
+    // arrived, but cannot redefine what a product costs.
+    const staffProduct = await fetch(`${BASE}/api/products`, {
+      method: 'POST',
+      headers: { cookie: staffSession.cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ sku: `SMOKE-STAFF-${STAMP}`, name: 'Should Not Exist', type: 'other', unit: 'each' }),
+    });
+    check('staff cannot change the catalog', staffProduct.status === 403, `got ${staffProduct.status}`);
+
+    const staffReceipt = await fetch(`${BASE}/api/products/${created.productId}/receipts`, {
+      method: 'POST',
+      headers: { cookie: staffSession.cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ quantity: 1 }),
+    });
+    check('staff can record stock that physically arrived', staffReceipt.status === 201, `got ${staffReceipt.status}`);
+
+    const staffScreen = await fetch(`${BASE}/inventory`, { headers: { cookie: staffSession.cookie }, redirect: 'manual' });
+    check('staff can open the inventory screen', staffScreen.status === 200, `got ${staffScreen.status}`);
+
+    const staffNew = await fetch(`${BASE}/inventory/new`, { headers: { cookie: staffSession.cookie }, redirect: 'manual' });
+    check(
+      'but the create screen refuses them rather than rendering a dead form',
+      staffNew.status === 403,
+      `got ${staffNew.status}`,
+    );
 
     /* ── Sign out really revokes ───────────────────────────────────────────── */
     const signedOut = await fetch(`${BASE}/api/auth/logout`, { method: 'POST', headers: { cookie } });

@@ -29,7 +29,11 @@ interface NavItem {
  * The nav is driven off the same capability map the API enforces, so a link never
  * points at a screen the user cannot use. Entries are added with their phase.
  */
-const NAV: NavItem[] = [{ to: '/', label: 'Dashboard', end: true }];
+const NAV: NavItem[] = [
+  { to: '/', label: 'Dashboard', end: true },
+  { to: '/inventory', label: 'Inventory' },
+  { to: '/vendors', label: 'Vendors' },
+];
 
 export default function ShellRoute({ loaderData }: { loaderData: { user: SessionUser } }) {
   const { user } = loaderData;
