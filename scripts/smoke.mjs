@@ -310,6 +310,17 @@ async function run() {
       JSON.stringify(unpriceableBody?.data?.costCents),
     );
 
+    const attention = await (await fetch(`${BASE}/api/inventory/attention`, { headers: { cookie } })).json();
+    check(
+      'the dashboard count of unpriceable products includes it',
+      (attention?.data?.missingCost ?? 0) >= 1,
+      JSON.stringify(attention?.data?.missingCost),
+    );
+    check(
+      'and the needs-ordering list is counted from the same place it is displayed',
+      (attention?.data?.low ?? []).some((row) => row.id === created.noCostId || row.id === created.productId),
+    );
+
     /* ── Capabilities are enforced by the API, not just the UI ─────────────── */
     const unauth = await fetch(`${BASE}/api/settings/service-rates`);
     check('unauthenticated API request is 401 JSON', unauth.status === 401 && (unauth.headers.get('content-type') ?? '').includes('json'), `${unauth.status}`);

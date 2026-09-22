@@ -33,29 +33,49 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   const user = await requireUser(env, request);
   const client = apiClient(env, request);
 
-  const [settingsResponse, tiersResponse, ratesResponse, lowResponse] = await Promise.all([
-    client.api.settings.$get(),
-    client.api.settings['price-tiers'].$get(),
-    client.api.settings['service-rates'].$get(),
-    client.api.inventory.low.$get(),
-  ]);
+  const [settingsResponse, tiersResponse, ratesResponse, attentionResponse, productsResponse] =
+    await Promise.all([
+      client.api.settings.$get(),
+      client.api.settings['price-tiers'].$get(),
+      client.api.settings['service-rates'].$get(),
+      client.api.inventory.attention.$get(),
+      // Only the total is needed; the page size keeps the payload to one row.
+      client.api.products.$get({ query: { limit: '1' } }),
+    ]);
 
   const settings = (await settingsResponse.json()).data;
   const tiers = (await tiersResponse.json()).data;
   const rates = (await ratesResponse.json()).data;
-  const low = (await lowResponse.json()).data ?? [];
+  const attention = (await attentionResponse.json()).data ?? { low: [], missingCost: 0 };
+  const productsPage = await productsResponse.json();
 
-  return { user, settings, tiers, rates, low };
+  return {
+    user,
+    settings,
+    tiers,
+    rates,
+    low: attention.low,
+    missingCost: attention.missingCost,
+    productCount: productsPage.pagination?.total ?? 0,
+  };
 }
 
 export default function DashboardRoute() {
-  const { user, settings, tiers, rates, low } = useLoaderData<typeof loader>();
+  const { user, settings, tiers, rates, low, missingCost, productCount } =
+    useLoaderData<typeof loader>();
 
   const activeTiers = tiers.filter((tier) => tier.isActive);
   const activeRates = rates.filter((rate) => rate.isActive);
   const blocked: string[] = [];
   if (activeTiers.length === 0) blocked.push('no active price tier, so nothing can be priced');
   if (activeRates.length === 0) blocked.push('no service rate, so application and mileage have nothing to bill from');
+  // The wall the first build hit: a product with no cost exists but cannot be
+  // sold, and finding that out at the composer is the worst time to learn it.
+  if (missingCost > 0) {
+    blocked.push(
+      `${missingCost} product${missingCost === 1 ? '' : 's'} have no cost and cannot be invoiced yet`,
+    );
+  }
 
   return (
     <>
@@ -82,13 +102,17 @@ export default function DashboardRoute() {
           value={String(low.length)}
           hint={low.length > 0 ? 'At or below the reorder point' : 'Nothing flagged'}
         />
-        <Stat label="Catalogued" value={String(tiers.length ? activeTiers.length : 0)} hint="Active margin tiers" />
+        <Stat label="Catalogued" value={String(productCount)} hint="Products in the catalog" />
+        <Stat
+          label="Not invoiceable"
+          value={String(missingCost)}
+          hint="No cost entered yet"
+        />
         <Stat
           label="Tax rate"
           value={formatPercent(settings.defaultTaxRate)}
-          hint="Applied to every new invoice"
+          hint={`${settings.defaultTermsDays}-day terms by default`}
         />
-        <Stat label="Terms" value={`${settings.defaultTermsDays} days`} hint="Default when unpaid" />
       </div>
 
       {/* The question this screen exists to answer without a click. */}

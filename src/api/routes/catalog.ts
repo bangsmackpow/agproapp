@@ -10,6 +10,7 @@ import {
   listProducts,
   listVendors,
   lowStockProducts,
+  productsMissingCost,
   receiveStock,
   updateProduct,
   updateVendor,
@@ -84,6 +85,22 @@ export const catalogRoutes = new Hono<AppEnv>()
     const input = await parseJson(c.req.raw, productUpdateSchema);
     const db = createDb(c.env.DB);
     return c.json({ data: await updateProduct(db, c.req.param('id'), input, actorOf(c)) });
+  })
+
+  /**
+   * What needs a human today. One endpoint because the dashboard and the morning
+   * email must not disagree about what "needs attention" means — the first build
+   * shipped a product list that could not be invoiced and nobody found out until a
+   * customer was standing at the scale.
+   */
+  .get('/inventory/attention', async (c) => {
+    const db = createDb(c.env.DB);
+    const [low, missingCost] = await Promise.all([
+      lowStockProducts(db),
+      productsMissingCost(db),
+    ]);
+
+    return c.json({ data: { low, missingCost } });
   })
 
   /** The needs-ordering set, for the dashboard panel and the email digest. */
